@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: autoproduction-postgres
+    environment:
+      POSTGRES_DB: autoproduction
+      POSTGRES_USER: autoproduction
+      POSTGRES_PASSWORD: autoproduction
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - autoproduction_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autoproduction -d autoproduction"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  autoproduction_pg_data:

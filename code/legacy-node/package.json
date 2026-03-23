@@ -1,0 +1,18 @@
+﻿{
+  "name": "autoproduction-mvp-code",
+  "version": "1.0.0",
+  "private": true,
+  "description": "P0 MVP scheduling backend and validation toolkit",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "test:unit": "node --test test/scheduler.engine.test.js",
+    "test:api": "node --test test/api.test.js",
+    "validate": "node scripts/run_validation.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1"
+  }
+}

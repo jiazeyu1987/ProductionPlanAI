@@ -1,0 +1,11 @@
+source_system,dataset_name,source_table,source_field,source_type,target_table,target_field,target_type,transform_rule,enum_mapping_rule,timezone_rule,nullable,owner_dept,owner_person,reviewer,sign_status,sign_date,remarks
+K3,sales_order_line_fact,T_SAL_ORDERENTRY,FOrderNo,string,sales_order_line_fact,sales_order_no,varchar(50),trim(),,keep_local_to_shanghai,N,销售部,张三,李四,DRAFT,,
+K3,sales_order_line_fact,T_SAL_ORDERENTRY,FEntryID,string,sales_order_line_fact,line_no,varchar(20),to_string(),,keep_local_to_shanghai,N,销售部,张三,李四,DRAFT,,
+K3,sales_order_line_fact,T_SAL_ORDERENTRY,FMaterialId,string,sales_order_line_fact,product_code,varchar(50),material_code_map(),product_code_map_v1,keep_local_to_shanghai,N,销售部,张三,李四,DRAFT,,
+K3,production_order_fact,T_PRD_MO,FMoBillNo,string,production_order_fact,production_order_no,varchar(50),trim(),,keep_local_to_shanghai,N,计划部,王五,赵六,DRAFT,,
+K3,schedule_control_fact,T_PRD_MO,FApproveStatus,enum,schedule_control_fact,review_passed_flag,smallint,approved_to_flag(),approve_status_map_v1,keep_local_to_shanghai,N,计划部,王五,赵六,DRAFT,,
+MES,process_route,mes_route_step,process_code,string,process_route,process_code,varchar(50),trim(),,keep_local_to_shanghai,N,工艺部,周七,钱八,DRAFT,,
+MES,employee_skill,mes_employee_skill,skill_level,enum,employee_skill,skill_level,varchar(20),upper(),skill_level_map_v1,keep_local_to_shanghai,N,生产部,吴九,郑十,DRAFT,,
+MES,shift_calendar,mes_shift_calendar,shift_start_time,datetime,shift_calendar,shift_start_time,timestamptz,parse_datetime(),,force_asia_shanghai,N,生产部,吴九,郑十,DRAFT,,
+MES,equipment_process_capability,mes_eq_proc,capacity_factor,decimal,equipment_process_capability,capacity_factor,numeric(10,4),round(4),,keep_local_to_shanghai,N,设备部,孙一,周二,DRAFT,,
+MES,reporting_fact,mes_reporting,report_qty,decimal,reporting_fact,report_qty,numeric(18,4),round(4),,keep_local_to_shanghai,N,生产部,吴九,郑十,DRAFT,,

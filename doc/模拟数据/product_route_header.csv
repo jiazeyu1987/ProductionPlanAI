@@ -1,0 +1,4 @@
+﻿"route_no","product_code","route_version","status","effective_from","updated_at"
+"R-ANGIO-V3","P-ANGIO-001","V3","ACTIVE","2026-03-20 00:00:00","2026-03-22 09:30:00"
+"R-BALLOON-V2","P-BALLOON-001","V2","ACTIVE","2026-03-20 00:00:00","2026-03-22 09:30:00"
+"R-STENT-V5","P-STENT-001","V5","ACTIVE","2026-03-20 00:00:00","2026-03-22 09:30:00"

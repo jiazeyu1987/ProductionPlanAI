@@ -1,0 +1,1035 @@
+﻿openapi: 3.0.3
+info:
+  title: AutoProduction Scheduling API
+  version: 1.0.0
+  description: P0 contract for ERP/MES integration and scheduling writeback.
+servers:
+  - url: /v1
+security:
+  - bearerAuth: []
+tags:
+  - name: erp-inbound
+  - name: mes-inbound
+  - name: erp-outbound
+  - name: internal
+paths:
+  /erp/sales-order-lines:
+    get:
+      tags: [erp-inbound]
+      summary: Pull sales order lines
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/SalesOrderLineListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/plan-orders:
+    get:
+      tags: [erp-inbound]
+      summary: Pull plan orders
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/PlanOrderListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/production-orders:
+    get:
+      tags: [erp-inbound]
+      summary: Pull production orders
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProductionOrderListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/sales-order-headers-raw:
+    get:
+      tags: [erp-inbound]
+      summary: Pull ERP sales order header raw table
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErpOrderHeaderRawListResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/sales-order-lines-raw:
+    get:
+      tags: [erp-inbound]
+      summary: Pull ERP sales order line raw table
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErpOrderLineRawListResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/production-order-headers-raw:
+    get:
+      tags: [erp-inbound]
+      summary: Pull ERP production order header raw table
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErpOrderHeaderRawListResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/production-order-lines-raw:
+    get:
+      tags: [erp-inbound]
+      summary: Pull ERP production order line raw table
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ErpOrderLineRawListResponse' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/schedule-controls:
+    get:
+      tags: [erp-inbound]
+      summary: Pull schedule controls
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleControlListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/mrp-links:
+    get:
+      tags: [erp-inbound]
+      summary: Pull MRP links
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/MrpLinkListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/delivery-progress:
+    get:
+      tags: [erp-inbound]
+      summary: Pull delivery progress
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/DeliveryProgressListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/material-availability:
+    get:
+      tags: [erp-inbound]
+      summary: Pull material availability (P1)
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/MaterialAvailabilityListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/equipments:
+    get:
+      tags: [mes-inbound]
+      summary: Pull equipments
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/EquipmentListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/process-routes:
+    get:
+      tags: [mes-inbound]
+      summary: Pull process routes
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ProcessRouteListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/reportings:
+    get:
+      tags: [mes-inbound]
+      summary: Pull reporting facts
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ReportingFactListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/equipment-process-capabilities:
+    get:
+      tags: [mes-inbound]
+      summary: Pull equipment process capabilities
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/EquipmentProcessCapabilityListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/employee-skills:
+    get:
+      tags: [mes-inbound]
+      summary: Pull employee skills
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/EmployeeSkillListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /mes/shift-calendar:
+    get:
+      tags: [mes-inbound]
+      summary: Pull shift calendar
+      parameters: [ { $ref: '#/components/parameters/UpdatedAfter' }, { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ShiftCalendarListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /reports/workshop-weekly-plan:
+    get:
+      tags: [erp-inbound]
+      summary: Pull workshop weekly plan rows (gold standard from 周计划)
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkshopWeeklyPlanListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /reports/workshop-monthly-plan:
+    get:
+      tags: [erp-inbound]
+      summary: Pull workshop monthly plan rows (gold standard from 2月计划-生产计划)
+      parameters: [ { $ref: '#/components/parameters/Page' }, { $ref: '#/components/parameters/PageSize' } ]
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/WorkshopMonthlyPlanListResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /reports/workshop-weekly-plan/export:
+    get:
+      tags: [erp-inbound]
+      summary: Export workshop weekly plan as xlsx
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /reports/workshop-monthly-plan/export:
+    get:
+      tags: [erp-inbound]
+      summary: Export workshop monthly plan as xls
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content:
+            application/vnd.ms-excel:
+              schema:
+                type: string
+                format: binary
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/schedule-results:
+    post:
+      tags: [erp-outbound]
+      summary: Write schedule results
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleResultsWriteRequest' }
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleWriteResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /erp/schedule-status:
+    post:
+      tags: [erp-outbound]
+      summary: Write schedule status
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleStatusWriteRequest' }
+      responses:
+        '200':
+          description: OK
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/ScheduleWriteResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/wip-lots:
+    post:
+      tags: [internal]
+      summary: Ingest WIP lot event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WipLotEventRequest' }
+      responses:
+        '202':
+          description: Accepted
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/AcceptedResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/replan-jobs:
+    post:
+      tags: [internal]
+      summary: Trigger replan job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplanJobRequest' }
+      responses:
+        '202':
+          description: Accepted
+          headers: { x-request-id: { $ref: '#/components/headers/XRequestId' } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/AcceptedResponse' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  headers:
+    XRequestId:
+      description: Request trace id
+      schema:
+        type: string
+
+  parameters:
+    UpdatedAfter:
+      in: query
+      name: updated_after
+      required: false
+      schema:
+        type: string
+        format: date-time
+    Page:
+      in: query
+      name: page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: page_size
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 200
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Business conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    TooManyRequests:
+      description: Rate limited
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ErrorDetail:
+      type: object
+      properties:
+        field: { type: string }
+        reason: { type: string }
+
+    ErrorResponse:
+      type: object
+      required: [request_id, code, message, retryable, timestamp]
+      properties:
+        request_id: { type: string }
+        code: { type: string }
+        message: { type: string }
+        details:
+          type: array
+          items: { $ref: '#/components/schemas/ErrorDetail' }
+        retryable: { type: boolean }
+        timestamp: { type: string, format: date-time }
+
+    BaseListResponse:
+      type: object
+      required: [request_id, page, page_size, total, items]
+      properties:
+        request_id: { type: string }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+
+    ScheduleResultsWriteRequest:
+      type: object
+      required: [request_id, schedule_version, items]
+      properties:
+        request_id: { type: string }
+        schedule_version: { type: string }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [order_no, order_type, plan_start_time, plan_finish_time, priority, lock_flag]
+            properties:
+              order_no: { type: string }
+              order_type: { type: string, enum: [sales, production] }
+              plan_start_time: { type: string, format: date-time }
+              plan_finish_time: { type: string, format: date-time }
+              priority: { type: integer }
+              lock_flag: { type: integer, enum: [0, 1] }
+
+    ScheduleStatusWriteRequest:
+      type: object
+      required: [request_id, schedule_version, items]
+      properties:
+        request_id: { type: string }
+        schedule_version: { type: string }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [order_no, status]
+            properties:
+              order_no: { type: string }
+              status: { type: string }
+
+    ScheduleWriteResponse:
+      type: object
+      required: [request_id, success_count, failed_count]
+      properties:
+        request_id: { type: string }
+        success_count: { type: integer }
+        failed_count: { type: integer }
+
+    WipLotEventRequest:
+      type: object
+      required: [request_id, wip_lot_id, order_no, process_code, qty, event_time]
+      properties:
+        request_id: { type: string }
+        wip_lot_id: { type: string }
+        order_no: { type: string }
+        process_code: { type: string }
+        qty: { type: number, minimum: 0 }
+        event_time: { type: string, format: date-time }
+
+    ReplanJobRequest:
+      type: object
+      required: [request_id, trigger_type, scope_type, base_version_no, reason]
+      properties:
+        request_id: { type: string }
+        trigger_type: { type: string, enum: [DELAY, PROGRESS_GAP, EQUIPMENT_DOWN, INSERT_ORDER] }
+        scope_type: { type: string, enum: [LOCAL, GLOBAL] }
+        base_version_no: { type: string }
+        reason: { type: string }
+
+    AcceptedResponse:
+      type: object
+      required: [request_id, accepted]
+      properties:
+        request_id: { type: string }
+        accepted: { type: boolean }
+        message: { type: string }
+
+    SalesOrderLine:
+      type: object
+      required: [sales_order_no, line_no, product_code, order_qty, order_date, expected_due_date, requested_ship_date, urgent_flag, order_status, last_update_time]
+      properties:
+        sales_order_no: { type: string }
+        line_no: { type: string }
+        product_code: { type: string }
+        order_qty: { type: number, minimum: 0 }
+        order_date: { type: string, format: date-time }
+        expected_due_date: { type: string, format: date-time }
+        requested_ship_date: { type: string, format: date-time }
+        urgent_flag: { type: integer, enum: [0, 1] }
+        order_status: { type: string }
+        last_update_time: { type: string, format: date-time }
+        erp_source_table: { type: string, description: ERP来源表名（sales_orders_raw）。 }
+        erp_record_id: { type: string, description: ERP原始头记录ID（表名+fid）。 }
+        erp_line_no: { type: string, description: ERP分录序号。 }
+        erp_line_id: { type: string, description: ERP分录记录ID（record_id+line_no）。 }
+        erp_run_id: { type: integer }
+        erp_fid: { type: integer }
+        erp_fetched_at: { type: string }
+        erp_form_id: { type: string }
+
+    PlanOrder:
+      type: object
+      required: [plan_order_no, source_sales_order_no, source_line_no, release_type, release_status, release_time, last_update_time]
+      properties:
+        plan_order_no: { type: string }
+        source_sales_order_no: { type: string }
+        source_line_no: { type: string }
+        release_type: { type: string, enum: [PURCHASE, OUTSOURCE, PRODUCTION] }
+        release_status: { type: string }
+        release_time: { type: string, format: date-time }
+        last_update_time: { type: string, format: date-time }
+
+    ProductionOrder:
+      type: object
+      required: [production_order_no, source_sales_order_no, source_line_no, source_plan_order_no, product_code, plan_qty, production_status, last_update_time]
+      properties:
+        production_order_no: { type: string }
+        source_sales_order_no: { type: string }
+        source_line_no: { type: string }
+        source_plan_order_no: { type: string }
+        material_list_no: { type: string }
+        product_code: { type: string }
+        product_name_cn: { type: string }
+        plan_qty: { type: number, minimum: 0 }
+        production_status: { type: string }
+        order_date: { type: string, format: date }
+        customer_remark: { type: string }
+        spec_model: { type: string }
+        production_batch_no: { type: string }
+        planned_finish_date_1: { type: string }
+        planned_finish_date_2: { type: string }
+        production_date_foreign_trade: { type: string }
+        packaging_form: { type: string }
+        sales_order_no: { type: string }
+        purchase_due_date: { type: string }
+        injection_due_date: { type: string }
+        market_remark_info: { type: string }
+        market_demand: { type: number }
+        semi_finished_code: { type: string }
+        semi_finished_inventory: { type: number }
+        semi_finished_demand: { type: number }
+        semi_finished_wip: { type: number }
+        need_order_qty: { type: number }
+        pending_inbound_qty: { type: number }
+        weekly_monthly_process_plan: { type: string }
+        workshop_outer_packaging_date: { type: string }
+        note: { type: string }
+        workshop_completed_qty: { type: number }
+        workshop_completed_time: { type: string }
+        outer_completed_qty: { type: number }
+        outer_completed_time: { type: string }
+        match_status: { type: string }
+        last_update_time: { type: string, format: date-time }
+        erp_source_table: { type: string, description: ERP来源表名（production_orders_raw）。 }
+        erp_record_id: { type: string, description: ERP原始头记录ID（表名+fid）。 }
+        erp_line_no: { type: string, description: ERP分录序号。 }
+        erp_line_id: { type: string, description: ERP分录记录ID（record_id+line_no）。 }
+        erp_run_id: { type: integer }
+        erp_fid: { type: integer }
+        erp_document_status: { type: string }
+        erp_fetched_at: { type: string }
+        erp_form_id: { type: string }
+
+    ErpOrderHeaderRaw:
+      type: object
+      required: [erp_source_table, erp_record_id, erp_fid, erp_bill_no, erp_header_json]
+      properties:
+        erp_source_table: { type: string }
+        erp_record_id: { type: string }
+        erp_run_id: { type: integer }
+        erp_fid: { type: integer }
+        erp_bill_no: { type: string }
+        erp_bill_date: { type: string }
+        erp_modify_date: { type: string }
+        erp_document_status: { type: string }
+        erp_org_no: { type: string }
+        erp_fetched_at: { type: string }
+        erp_form_id: { type: string }
+        erp_header_json: { type: string, description: ERP单头完整JSON。 }
+
+    ErpOrderLineRaw:
+      type: object
+      required: [erp_source_table, erp_record_id, erp_line_no, erp_line_id, erp_line_json]
+      properties:
+        erp_source_table: { type: string }
+        erp_record_id: { type: string }
+        erp_line_no: { type: string }
+        erp_line_id: { type: string }
+        erp_bill_no: { type: string }
+        erp_fid: { type: integer }
+        erp_form_id: { type: string }
+        erp_line_json: { type: string, description: ERP分录完整JSON。 }
+
+    ScheduleControl:
+      type: object
+      required: [order_no, order_type, review_passed_flag, frozen_flag, schedulable_flag, close_flag, promised_due_date, last_update_time]
+      properties:
+        order_no: { type: string }
+        order_type: { type: string, enum: [sales, production] }
+        review_passed_flag: { type: integer, enum: [0, 1] }
+        frozen_flag: { type: integer, enum: [0, 1] }
+        schedulable_flag: { type: integer, enum: [0, 1] }
+        close_flag: { type: integer, enum: [0, 1] }
+        promised_due_date: { type: string, format: date-time }
+        last_update_time: { type: string, format: date-time }
+
+    MrpLink:
+      type: object
+      required: [order_no, order_type, mrp_run_id, run_time, last_update_time]
+      properties:
+        order_no: { type: string }
+        order_type: { type: string, enum: [sales, production] }
+        mrp_run_id: { type: string }
+        run_time: { type: string, format: date-time }
+        last_update_time: { type: string, format: date-time }
+
+    DeliveryProgress:
+      type: object
+      required: [order_no, order_type, warehoused_qty, shipped_qty, delivery_status, last_update_time]
+      properties:
+        order_no: { type: string }
+        order_type: { type: string, enum: [sales, production] }
+        warehoused_qty: { type: number, minimum: 0 }
+        shipped_qty: { type: number, minimum: 0 }
+        delivery_status: { type: string }
+        last_update_time: { type: string, format: date-time }
+
+    MaterialAvailability:
+      type: object
+      required: [material_code, order_no, process_code, available_qty, available_time, ready_flag, last_update_time]
+      properties:
+        material_code: { type: string }
+        order_no: { type: string }
+        process_code: { type: string }
+        available_qty: { type: number, minimum: 0 }
+        available_time: { type: string, format: date-time }
+        ready_flag: { type: integer, enum: [0, 1] }
+        last_update_time: { type: string, format: date-time }
+
+    Equipment:
+      type: object
+      required: [equipment_code, workshop_code, line_code, status, capacity_per_shift, last_update_time]
+      properties:
+        equipment_code: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        workshop_code: { type: string }
+        line_code: { type: string }
+        status: { type: string }
+        status_name_cn: { type: string }
+        capacity_per_shift: { type: number, minimum: 0 }
+        last_update_time: { type: string, format: date-time }
+
+    ProcessRoute:
+      type: object
+      required: [route_no, product_code, process_code, sequence_no, dependency_type, capacity_per_shift, required_manpower_per_group, required_equipment_count, last_update_time]
+      properties:
+        route_no: { type: string }
+        route_name_cn: { type: string }
+        product_code: { type: string }
+        product_name_cn: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        sequence_no: { type: integer }
+        dependency_type: { type: string, enum: [FS, SS] }
+        dependency_type_name_cn: { type: string }
+        capacity_per_shift: { type: number, minimum: 0 }
+        required_manpower_per_group: { type: integer, minimum: 0 }
+        required_equipment_count: { type: integer, minimum: 0 }
+        last_update_time: { type: string, format: date-time }
+
+    ReportingFact:
+      type: object
+      required: [report_id, order_no, order_type, process_code, report_qty, report_time, shift_code, created_at]
+      properties:
+        report_id: { type: string }
+        order_no: { type: string }
+        order_type: { type: string, enum: [sales, production] }
+        product_code: { type: string }
+        product_name_cn: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        report_qty: { type: number, minimum: 0 }
+        report_time: { type: string, format: date-time }
+        shift_code: { type: string, enum: [DAY, NIGHT] }
+        shift_name_cn: { type: string }
+        team_code: { type: string }
+        created_at: { type: string, format: date-time }
+
+    EquipmentProcessCapability:
+      type: object
+      required: [equipment_code, process_code, enabled_flag, capacity_factor, last_update_time]
+      properties:
+        equipment_code: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        enabled_flag: { type: integer, enum: [0, 1] }
+        capacity_factor: { type: number, exclusiveMinimum: 0 }
+        last_update_time: { type: string, format: date-time }
+
+    EmployeeSkill:
+      type: object
+      required: [employee_id, process_code, skill_level, efficiency_factor, active_flag, last_update_time]
+      properties:
+        employee_id: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        skill_level: { type: string, enum: [INDEPENDENT, ASSIST, NONE] }
+        efficiency_factor: { type: number, exclusiveMinimum: 0 }
+        active_flag: { type: integer, enum: [0, 1] }
+        last_update_time: { type: string, format: date-time }
+
+    ShiftCalendar:
+      type: object
+      required: [calendar_date, shift_code, shift_start_time, shift_end_time, open_flag, workshop_code, last_update_time]
+      properties:
+        calendar_date: { type: string, format: date }
+        shift_code: { type: string, enum: [DAY, NIGHT] }
+        shift_name_cn: { type: string }
+        shift_start_time: { type: string, format: date-time }
+        shift_end_time: { type: string, format: date-time }
+        open_flag: { type: integer, enum: [0, 1] }
+        workshop_code: { type: string }
+        last_update_time: { type: string, format: date-time }
+
+    WorkshopWeeklyPlanRow:
+      type: object
+      required: [production_order_no, customer_remark, product_name, spec_model, production_batch_no, order_qty, packaging_form, sales_order_no, workshop_outer_packaging_date, process_schedule_remark]
+      properties:
+        production_order_no: { type: string }
+        customer_remark: { type: string }
+        product_name: { type: string }
+        spec_model: { type: string }
+        production_batch_no: { type: string }
+        order_qty: { type: number, minimum: 0 }
+        packaging_form: { type: string }
+        sales_order_no: { type: string }
+        workshop_outer_packaging_date: { type: string }
+        process_schedule_remark: { type: string }
+
+    WorkshopMonthlyPlanRow:
+      type: object
+      required: [order_date, production_order_no, customer_remark, product_name, spec_model, production_batch_no, planned_finish_date_2, production_date_foreign_trade, order_qty, packaging_form, sales_order_no, purchase_due_date, injection_due_date, market_remark_info, market_demand, planned_finish_date_1, semi_finished_code, semi_finished_inventory, semi_finished_demand, semi_finished_wip, need_order_qty, pending_inbound_qty, weekly_monthly_process_plan, workshop_outer_packaging_date, note, workshop_completed_qty, workshop_completed_time, outer_completed_qty, outer_completed_time, match_status]
+      properties:
+        order_date: { type: string, format: date }
+        production_order_no: { type: string }
+        customer_remark: { type: string }
+        product_name: { type: string }
+        spec_model: { type: string }
+        production_batch_no: { type: string }
+        planned_finish_date_2: { type: string }
+        production_date_foreign_trade: { type: string }
+        order_qty: { type: number, minimum: 0 }
+        packaging_form: { type: string }
+        sales_order_no: { type: string }
+        purchase_due_date: { type: string }
+        injection_due_date: { type: string }
+        market_remark_info: { type: string }
+        market_demand: { type: number }
+        planned_finish_date_1: { type: string }
+        semi_finished_code: { type: string }
+        semi_finished_inventory: { type: number }
+        semi_finished_demand: { type: number }
+        semi_finished_wip: { type: number }
+        need_order_qty: { type: number }
+        pending_inbound_qty: { type: number }
+        weekly_monthly_process_plan: { type: string }
+        workshop_outer_packaging_date: { type: string }
+        note: { type: string }
+        workshop_completed_qty: { type: number }
+        workshop_completed_time: { type: string }
+        outer_completed_qty: { type: number }
+        outer_completed_time: { type: string }
+        match_status: { type: string }
+
+    SalesOrderLineListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/SalesOrderLine' }
+    PlanOrderListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/PlanOrder' }
+    ProductionOrderListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ProductionOrder' }
+    ErpOrderHeaderRawListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ErpOrderHeaderRaw' }
+    ErpOrderLineRawListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ErpOrderLineRaw' }
+    ScheduleControlListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ScheduleControl' }
+    MrpLinkListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/MrpLink' }
+    DeliveryProgressListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/DeliveryProgress' }
+    MaterialAvailabilityListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/MaterialAvailability' }
+    EquipmentListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/Equipment' }
+    ProcessRouteListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ProcessRoute' }
+    ReportingFactListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ReportingFact' }
+    EquipmentProcessCapabilityListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/EquipmentProcessCapability' }
+    EmployeeSkillListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/EmployeeSkill' }
+    ShiftCalendarListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ShiftCalendar' }
+    WorkshopWeeklyPlanListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/WorkshopWeeklyPlanRow' }
+    WorkshopMonthlyPlanListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/WorkshopMonthlyPlanRow' }

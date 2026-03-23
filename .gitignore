@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build / runtime logs
+logs/
+code/logs/
+*.log
+code/backend/target/
+code/frontend/dist/
+
+# Large local assets / tools
+media/
+tools/
+*.tar.gz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

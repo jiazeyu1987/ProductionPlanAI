@@ -1,0 +1,9 @@
+﻿{
+  "expected_version_no": "V20260323-BASE-01",
+  "published": true,
+  "order_count": 2,
+  "task_count": 2,
+  "delayed_order_count": 0,
+  "infeasible_task_count": 0,
+  "erp_writeback_success_rate": 1.0
+}

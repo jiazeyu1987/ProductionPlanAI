@@ -1,0 +1,10 @@
+mapping_name,source_system,dataset_name,source_field,source_value,target_value,target_meaning,owner_person,reviewer,sign_status,sign_date,remarks
+order_type_map_v1,K3,schedule_control_fact,order_type,S,sales,销售订单,王五,赵六,DRAFT,,
+order_type_map_v1,K3,schedule_control_fact,order_type,P,production,生产订单,王五,赵六,DRAFT,,
+approve_status_map_v1,K3,schedule_control_fact,FApproveStatus,A,1,已审核通过,王五,赵六,DRAFT,,
+approve_status_map_v1,K3,schedule_control_fact,FApproveStatus,U,0,未审核通过,王五,赵六,DRAFT,,
+skill_level_map_v1,MES,employee_skill,skill_level,MASTER,INDEPENDENT,可独立作业,吴九,郑十,DRAFT,,
+skill_level_map_v1,MES,employee_skill,skill_level,ASSIST,ASSIST,可辅助作业,吴九,郑十,DRAFT,,
+skill_level_map_v1,MES,employee_skill,skill_level,NONE,NONE,不具备作业能力,吴九,郑十,DRAFT,,
+shift_code_map_v1,MES,shift_calendar,shift_code,D,DAY,日班,吴九,郑十,DRAFT,,
+shift_code_map_v1,MES,shift_calendar,shift_code,N,NIGHT,夜班,吴九,郑十,DRAFT,,

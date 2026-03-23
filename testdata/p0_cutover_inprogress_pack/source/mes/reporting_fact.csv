@@ -1,0 +1,2 @@
+﻿report_id,order_no,order_type,process_code,report_qty,report_time,shift_code,team_code,created_at
+REP20260322031,MO20260320001,production,PROC-020,800,2026-03-22 20:10:00,DAY,TEAM-B,2026-03-22 20:10:05

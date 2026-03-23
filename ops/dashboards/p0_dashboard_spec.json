@@ -1,0 +1,152 @@
+{
+  "dashboard_id": "autoproduction-p0-runtime",
+  "title": "AutoProduction P0 Runtime Dashboard",
+  "timezone": "Asia/Shanghai",
+  "refresh_interval_seconds": 60,
+  "default_time_range": "last_24h",
+  "sections": [
+    {
+      "name": "同步链路",
+      "widgets": [
+        {
+          "id": "sync_delay_p95",
+          "type": "timeseries",
+          "title": "同步延迟 P95 (分钟)",
+          "metric": "sync_delay_minutes",
+          "aggregation": "p95",
+          "thresholds": {
+            "warning": 10,
+            "critical": 30
+          }
+        },
+        {
+          "id": "sync_success_5m",
+          "type": "single_value",
+          "title": "触发同步成功率(5分钟窗口)",
+          "metric": "sync_success_rate_5m",
+          "unit": "%",
+          "thresholds": {
+            "warning": 99,
+            "critical": 97
+          },
+          "comparison": "lower_is_worse"
+        },
+        {
+          "id": "night_compensation_success",
+          "type": "single_value",
+          "title": "夜间补偿成功率",
+          "metric": "night_compensation_success_rate",
+          "unit": "%",
+          "thresholds": {
+            "warning": 99.5,
+            "critical": 98
+          },
+          "comparison": "lower_is_worse"
+        }
+      ]
+    },
+    {
+      "name": "排产与发布",
+      "widgets": [
+        {
+          "id": "schedule_duration_p95",
+          "type": "timeseries",
+          "title": "单次排产耗时 P95 (分钟)",
+          "metric": "schedule_duration_p95_minutes",
+          "thresholds": {
+            "warning": 5,
+            "critical": 8
+          }
+        },
+        {
+          "id": "publish_success_daily",
+          "type": "single_value",
+          "title": "发布成功率(日)",
+          "metric": "publish_success_rate_daily",
+          "unit": "%",
+          "thresholds": {
+            "warning": 99.5,
+            "critical": 98
+          },
+          "comparison": "lower_is_worse"
+        },
+        {
+          "id": "writeback_success_daily",
+          "type": "single_value",
+          "title": "ERP回写成功率(日)",
+          "metric": "erp_writeback_success_rate_daily",
+          "unit": "%",
+          "thresholds": {
+            "warning": 99,
+            "critical": 97
+          },
+          "comparison": "lower_is_worse"
+        }
+      ]
+    },
+    {
+      "name": "业务稳定性",
+      "widgets": [
+        {
+          "id": "replan_failure_daily",
+          "type": "timeseries",
+          "title": "重排失败率(日)",
+          "metric": "replan_failure_rate_daily",
+          "unit": "%",
+          "thresholds": {
+            "warning": 3,
+            "critical": 8
+          }
+        },
+        {
+          "id": "infeasible_ratio_daily",
+          "type": "timeseries",
+          "title": "不可执行任务占比(日)",
+          "metric": "infeasible_task_ratio_daily",
+          "unit": "%",
+          "thresholds": {
+            "warning": 10,
+            "critical": 20
+          }
+        },
+        {
+          "id": "manpower_coverage_key_process",
+          "type": "single_value",
+          "title": "关键工艺人力覆盖率",
+          "metric": "key_process_manpower_coverage_rate",
+          "unit": "%",
+          "thresholds": {
+            "warning": 95,
+            "critical": 90
+          },
+          "comparison": "lower_is_worse"
+        }
+      ]
+    },
+    {
+      "name": "处置效率",
+      "widgets": [
+        {
+          "id": "incident_response_sla",
+          "type": "table",
+          "title": "事件响应SLA达成率",
+          "source": "incident_events",
+          "columns": [
+            "event_id",
+            "priority",
+            "ack_minutes",
+            "mitigation_minutes",
+            "sla_met"
+          ]
+        },
+        {
+          "id": "open_incidents_by_priority",
+          "type": "bar",
+          "title": "未关闭事件数(按优先级)",
+          "metric": "open_incidents_count",
+          "group_by": "priority"
+        }
+      ]
+    }
+  ]
+}

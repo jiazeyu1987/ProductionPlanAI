@@ -1,0 +1,3 @@
+﻿calendar_date,shift_code,shift_start_time,shift_end_time,open_flag,workshop_code,last_update_time
+2026-03-23,DAY,2026-03-23 08:00:00,2026-03-23 20:00:00,1,WS-A,2026-03-22 17:00:00
+2026-03-23,NIGHT,2026-03-23 20:00:00,2026-03-24 08:00:00,1,WS-A,2026-03-22 17:00:00

@@ -1,0 +1,2 @@
+﻿production_order_no,source_sales_order_no,source_line_no,product_code,plan_qty,plan_start_date,plan_finish_date,production_status,last_update_time
+MO20260322011,SO_NOT_EXIST,99,P-ANGIO-001,300,2026-03-23 08:00:00,2026-03-24 20:00:00,OPEN,2026-03-22 10:15:00

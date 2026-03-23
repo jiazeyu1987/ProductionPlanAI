@@ -1,0 +1,13 @@
+﻿{
+    "details":  [
+                    {
+                        "field":  "production_order_no",
+                        "reason":  "required"
+                    }
+                ],
+    "message":  "required field missing: production_order_no",
+    "code":  "VALIDATION_ERROR",
+    "timestamp":  "2026-03-22T08:30:12+08:00",
+    "retryable":  false,
+    "request_id":  "req-20260322-9999"
+}

@@ -1,0 +1,36 @@
+server:
+  port: ${PORT:5931}
+
+spring:
+  profiles:
+    default: local
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/autoproduction}
+    username: ${DB_USERNAME:autoproduction}
+    password: ${DB_PASSWORD:autoproduction}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: Asia/Shanghai
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+mvp:
+  timezone: Asia/Shanghai
+  shift-hours: 12
+  shifts-per-day: 2
+  erp:
+    use-real-orders: ${ERP_USE_REAL_ORDERS:true}
+    sqlite-path: ${ERP_SQLITE_PATH:D:/ProjectPackage/demo/erp_demo/erp_recent_orders.db}

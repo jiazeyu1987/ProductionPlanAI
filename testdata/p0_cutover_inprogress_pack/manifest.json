@@ -1,0 +1,9 @@
+﻿{
+  "pack_name": "p0_cutover_inprogress_pack",
+  "pack_version": "1.0.0",
+  "created_at": "2026-03-22T16:20:00+08:00",
+  "owner": "cutover_owner",
+  "seed": 20260322,
+  "scenario_tags": ["cutover", "in_progress", "replan"],
+  "notes": "用于验证带在制进度初始化与上线切换后的重排连续性。"
+}

@@ -1,0 +1,17 @@
+﻿{
+    "request_id":  "req-20260322-0001",
+    "page_size":  200,
+    "items":  [
+                  {
+                      "calendar_date":  "2026-03-23",
+                      "workshop_code":  "WS-A",
+                      "last_update_time":  "2026-03-22T17:00:00+08:00",
+                      "shift_end_time":  "2026-03-23T20:00:00+08:00",
+                      "shift_code":  "DAY",
+                      "open_flag":  1,
+                      "shift_start_time":  "2026-03-23T08:00:00+08:00"
+                  }
+              ],
+    "page":  1,
+    "total":  1
+}

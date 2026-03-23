@@ -1,0 +1,4 @@
+﻿"product_code","product_name","spec_model","uom","active_flag","updated_at"
+"P-ANGIO-001","ANGIO_CATHETER","6F_100CM","PCS","1","2026-03-22 09:00:00"
+"P-BALLOON-001","BALLOON_CATHETER","2.5_20MM","PCS","1","2026-03-22 09:00:00"
+"P-STENT-001","CARDIAC_STENT","3.0_18MM","PCS","1","2026-03-22 09:00:00"

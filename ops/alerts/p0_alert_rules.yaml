@@ -1,0 +1,155 @@
+version: 1
+profile: p0
+timezone: Asia/Shanghai
+evaluation_interval: 1m
+
+rules:
+  - id: sync_delay_warning
+    metric: sync_delay_minutes
+    description: ERP/MES sync delay warning threshold
+    condition: value > 10
+    for: 5m
+    severity: warning
+    ticket_priority: P2
+  - id: sync_delay_critical
+    metric: sync_delay_minutes
+    description: ERP/MES sync delay critical threshold
+    condition: value > 30
+    for: 3m
+    severity: critical
+    ticket_priority: P1
+
+  - id: sync_success_warning
+    metric: sync_success_rate_5m
+    description: Trigger sync success rate warning threshold
+    condition: value < 99
+    for: 10m
+    severity: warning
+    ticket_priority: P2
+  - id: sync_success_critical
+    metric: sync_success_rate_5m
+    description: Trigger sync success rate critical threshold
+    condition: value < 97
+    for: 5m
+    severity: critical
+    ticket_priority: P1
+
+  - id: night_compensation_warning
+    metric: night_compensation_success_rate
+    description: Night compensation success rate warning threshold
+    condition: value < 99.5
+    for: 15m
+    severity: warning
+    ticket_priority: P3
+  - id: night_compensation_critical
+    metric: night_compensation_success_rate
+    description: Night compensation success rate critical threshold
+    condition: value < 98
+    for: 10m
+    severity: critical
+    ticket_priority: P2
+
+  - id: schedule_p95_warning
+    metric: schedule_duration_p95_minutes
+    description: Single scheduling runtime P95 warning threshold
+    condition: value > 5
+    for: 10m
+    severity: warning
+    ticket_priority: P2
+  - id: schedule_p95_critical
+    metric: schedule_duration_p95_minutes
+    description: Single scheduling runtime P95 critical threshold
+    condition: value > 8
+    for: 5m
+    severity: critical
+    ticket_priority: P1
+
+  - id: publish_success_warning
+    metric: publish_success_rate_daily
+    description: Daily publish success rate warning threshold
+    condition: value < 99.5
+    for: 30m
+    severity: warning
+    ticket_priority: P2
+  - id: publish_success_critical
+    metric: publish_success_rate_daily
+    description: Daily publish success rate critical threshold
+    condition: value < 98
+    for: 15m
+    severity: critical
+    ticket_priority: P1
+
+  - id: writeback_success_warning
+    metric: erp_writeback_success_rate_daily
+    description: Daily ERP writeback success rate warning threshold
+    condition: value < 99
+    for: 30m
+    severity: warning
+    ticket_priority: P2
+  - id: writeback_success_critical
+    metric: erp_writeback_success_rate_daily
+    description: Daily ERP writeback success rate critical threshold
+    condition: value < 97
+    for: 15m
+    severity: critical
+    ticket_priority: P1
+
+  - id: replan_failure_warning
+    metric: replan_failure_rate_daily
+    description: Daily replan failure rate warning threshold
+    condition: value > 3
+    for: 30m
+    severity: warning
+    ticket_priority: P3
+  - id: replan_failure_critical
+    metric: replan_failure_rate_daily
+    description: Daily replan failure rate critical threshold
+    condition: value > 8
+    for: 15m
+    severity: critical
+    ticket_priority: P2
+
+  - id: infeasible_task_warning
+    metric: infeasible_task_ratio_daily
+    description: Daily infeasible task ratio warning threshold
+    condition: value > 10
+    for: 30m
+    severity: warning
+    ticket_priority: P3
+  - id: infeasible_task_critical
+    metric: infeasible_task_ratio_daily
+    description: Daily infeasible task ratio critical threshold
+    condition: value > 20
+    for: 15m
+    severity: critical
+    ticket_priority: P2
+
+  - id: manpower_coverage_warning
+    metric: key_process_manpower_coverage_rate
+    description: Key process manpower coverage warning threshold
+    condition: value < 95
+    for: 20m
+    severity: warning
+    ticket_priority: P3
+  - id: manpower_coverage_critical
+    metric: key_process_manpower_coverage_rate
+    description: Key process manpower coverage critical threshold
+    condition: value < 90
+    for: 10m
+    severity: critical
+    ticket_priority: P2
+
+routing:
+  critical:
+    channels:
+      - p1_oncall_phone
+      - p1_im_group
+      - incident_management
+    ack_within: 5m
+    mitigation_within: 30m
+  warning:
+    channels:
+      - scheduling_oncall_im
+      - ops_ticket_queue
+    ack_within: 15m
+    mitigation_within: 2h

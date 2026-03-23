@@ -1,0 +1,2 @@
+﻿sales_order_no,line_no,product_code,order_qty,order_date,expected_due_date,requested_ship_date,urgent_flag,order_status,last_update_time
+SO20260320001,10,P-STENT-001,2000,2026-03-20 09:00:00,2026-04-10 00:00:00,2026-04-12 00:00:00,0,APPROVED,2026-03-22 09:05:00

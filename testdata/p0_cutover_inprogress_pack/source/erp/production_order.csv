@@ -1,0 +1,3 @@
+﻿production_order_no,source_sales_order_no,source_line_no,product_code,plan_qty,plan_start_date,plan_finish_date,production_status,last_update_time
+MO20260320001,SO20260320001,10,P-STENT-001,2000,2026-03-21 08:00:00,2026-03-26 20:00:00,IN_PROGRESS,2026-03-22 10:15:00
+MO20260320002,SO20260320001,10,P-STENT-001,500,2026-03-23 08:00:00,2026-03-27 20:00:00,OPEN,2026-03-22 10:20:00

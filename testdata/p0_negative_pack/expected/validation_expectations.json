@@ -1,0 +1,13 @@
+﻿{
+  "expected_error_rules": [
+    "invalid_binary:urgent_flag",
+    "duplicate_key:sales_order_no,line_no",
+    "invalid_datetime:expected_due_date",
+    "source_sales_order_not_found",
+    "review_passed_but_no_promised_due_date",
+    "order_reference_not_found",
+    "invalid_datetime:run_time",
+    "invalid_numeric:warehoused_qty"
+  ],
+  "expected_gate_result": "FAILED"
+}

@@ -1,0 +1,74 @@
+{
+  "generated_at_utc": "2026-03-18T08:07:17.154498+00:00",
+  "input_path": "doc\\plan\\erp_extract_template.xlsx",
+  "summary": {
+    "datasets_expected": 5,
+    "datasets_found": 5,
+    "errors": 0,
+    "warnings": 5
+  },
+  "dataset_stats": {
+    "sales_order_line": {
+      "rows": 0,
+      "errors": 0,
+      "warnings": 1
+    },
+    "production_order": {
+      "rows": 0,
+      "errors": 0,
+      "warnings": 1
+    },
+    "schedule_control": {
+      "rows": 0,
+      "errors": 0,
+      "warnings": 1
+    },
+    "mrp_result_link": {
+      "rows": 0,
+      "errors": 0,
+      "warnings": 1
+    },
+    "delivery_progress": {
+      "rows": 0,
+      "errors": 0,
+      "warnings": 1
+    }
+  },
+  "issues": [
+    {
+      "level": "warning",
+      "dataset": "sales_order_line",
+      "rule": "dataset_has_zero_rows",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "level": "warning",
+      "dataset": "production_order",
+      "rule": "dataset_has_zero_rows",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "level": "warning",
+      "dataset": "schedule_control",
+      "rule": "dataset_has_zero_rows",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "level": "warning",
+      "dataset": "mrp_result_link",
+      "rule": "dataset_has_zero_rows",
+      "count": 0,
+      "samples": []
+    },
+    {
+      "level": "warning",
+      "dataset": "delivery_progress",
+      "rule": "dataset_has_zero_rows",
+      "count": 0,
+      "samples": []
+    }
+  ]
+}

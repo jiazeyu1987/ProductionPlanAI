@@ -1,0 +1,9 @@
+﻿{
+  "pack_name": "p0_baseline_pack",
+  "pack_version": "1.0.0",
+  "created_at": "2026-03-22T16:00:00+08:00",
+  "owner": "planning_pm",
+  "seed": 20260322,
+  "scenario_tags": ["baseline", "single_line", "day_night_shift"],
+  "notes": "P0标准正向场景，覆盖接单-排产-发布-报工-回写。"
+}

@@ -1,0 +1,1064 @@
+openapi: 3.0.3
+info:
+  title: AutoProduction Scheduling Internal API
+  version: 1.0.0
+  description: Internal API contract for scheduling console, approval workflow, publish/rollback and ops query.
+servers:
+  - url: /internal/v1
+security:
+  - bearerAuth: []
+
+tags:
+  - name: order
+  - name: version
+  - name: dispatch
+  - name: alert
+  - name: replan
+  - name: audit
+  - name: integration
+  - name: simulation
+
+paths:
+  /internal/order-pool:
+    get:
+      tags: [order]
+      summary: Query order pool
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: frozen_flag
+          schema: { type: integer, enum: [0, 1] }
+        - in: query
+          name: urgent_flag
+          schema: { type: integer, enum: [0, 1] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrderPoolListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/schedule-versions:
+    get:
+      tags: [version]
+      summary: Query schedule versions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleVersionListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/schedule-versions/{version_no}/tasks:
+    get:
+      tags: [version]
+      summary: Query schedule tasks by version
+      parameters:
+        - in: path
+          name: version_no
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduleTaskListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/schedule-versions/{version_no}/diff:
+    get:
+      tags: [version]
+      summary: Query version diff summary
+      parameters:
+        - in: path
+          name: version_no
+          required: true
+          schema: { type: string }
+        - in: query
+          name: compare_with
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VersionDiffResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/dispatch-commands:
+    get:
+      tags: [dispatch]
+      summary: Query dispatch commands
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: command_type
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DispatchCommandListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    post:
+      tags: [dispatch]
+      summary: Create dispatch command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DispatchCommandRequest' }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcceptedResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/dispatch-commands/{command_id}/approvals:
+    post:
+      tags: [dispatch]
+      summary: Approve or reject dispatch command
+      parameters:
+        - in: path
+          name: command_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DispatchApprovalRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/schedule-versions/{version_no}/publish:
+    post:
+      tags: [version]
+      summary: Publish schedule version
+      parameters:
+        - in: path
+          name: version_no
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/schedule-versions/{version_no}/rollback:
+    post:
+      tags: [version]
+      summary: Rollback schedule version
+      parameters:
+        - in: path
+          name: version_no
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VersionActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/alerts:
+    get:
+      tags: [alert]
+      summary: Query alert events
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: severity
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertEventListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/alerts/{alert_id}/ack:
+    post:
+      tags: [alert]
+      summary: Acknowledge alert event
+      parameters:
+        - in: path
+          name: alert_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/alerts/{alert_id}/close:
+    post:
+      tags: [alert]
+      summary: Close alert event
+      parameters:
+        - in: path
+          name: alert_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/replan-jobs:
+    post:
+      tags: [replan]
+      summary: Trigger replan job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReplanJobRequest' }
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcceptedResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/replan-jobs/{job_no}:
+    get:
+      tags: [replan]
+      summary: Query replan job
+      parameters:
+        - in: path
+          name: job_no
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReplanJobResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/audit-logs:
+    get:
+      tags: [audit]
+      summary: Query audit logs
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: entity_type
+          schema: { type: string }
+        - in: query
+          name: request_id
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuditLogListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/integration/inbox:
+    get:
+      tags: [integration]
+      summary: Query integration inbox messages
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: topic
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationMessageListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/integration/outbox:
+    get:
+      tags: [integration]
+      summary: Query integration outbox messages
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: status
+          schema: { type: string }
+        - in: query
+          name: topic
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IntegrationMessageListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/integration/outbox/{message_id}/retry:
+    post:
+      tags: [integration]
+      summary: Retry integration outbox message
+      parameters:
+        - in: path
+          name: message_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutboxRetryRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ActionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/state:
+    get:
+      tags: [simulation]
+      summary: Query simulation state
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationStateResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/events:
+    get:
+      tags: [simulation]
+      summary: Query simulation events
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - in: query
+          name: event_type
+          schema: { type: string }
+        - in: query
+          name: event_date
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationEventListResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/reset:
+    post:
+      tags: [simulation]
+      summary: Reset simulation state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulationResetRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationStateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/run:
+    post:
+      tags: [simulation]
+      summary: Run day-forward simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulationRunRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationRunResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/manual/add-production-order:
+    post:
+      tags: [simulation]
+      summary: Add one manual production order to main system
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManualSimulationActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManualAddProductionOrderResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/manual/advance-day:
+    post:
+      tags: [simulation]
+      summary: Advance one day in main system manual simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManualSimulationActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationRunResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /internal/simulation/manual/reset:
+    post:
+      tags: [simulation]
+      summary: Reset main system to pre-manual-simulation snapshot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManualSimulationActionRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SimulationStateResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Page:
+      in: query
+      name: page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: page_size
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 200
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Business conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [request_id, code, message]
+      properties:
+        request_id: { type: string }
+        code: { type: string }
+        message: { type: string }
+        retryable: { type: boolean }
+
+    BaseListResponse:
+      type: object
+      required: [request_id, page, page_size, total, items]
+      properties:
+        request_id: { type: string }
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+        items:
+          type: array
+          items:
+            type: object
+
+    ActionResponse:
+      type: object
+      required: [request_id, success]
+      properties:
+        request_id: { type: string }
+        success: { type: boolean }
+        message: { type: string }
+
+    AcceptedResponse:
+      type: object
+      required: [request_id, accepted]
+      properties:
+        request_id: { type: string }
+        accepted: { type: boolean }
+        message: { type: string }
+
+    OrderPoolItem:
+      type: object
+      required: [order_no, order_type, product_code, order_qty, status]
+      properties:
+        order_no: { type: string }
+        order_type: { type: string, enum: [sales, production] }
+        line_no: { type: string }
+        product_code: { type: string }
+        product_name_cn: { type: string }
+        order_qty: { type: number }
+        expected_due_date: { type: string, format: date-time }
+        promised_due_date: { type: string, format: date-time }
+        urgent_flag: { type: integer, enum: [0, 1] }
+        frozen_flag: { type: integer, enum: [0, 1] }
+        status: { type: string }
+        status_name_cn: { type: string }
+
+    ScheduleVersionItem:
+      type: object
+      required: [version_no, status, rule_version_no, created_at]
+      properties:
+        version_no: { type: string }
+        status: { type: string }
+        status_name_cn: { type: string }
+        based_on_version: { type: string }
+        rule_version_no: { type: string }
+        publish_time: { type: string, format: date-time }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+
+    ScheduleTaskItem:
+      type: object
+      required: [id, version_no, order_no, process_code, plan_start_time, plan_finish_time, plan_qty]
+      properties:
+        id: { type: integer }
+        version_no: { type: string }
+        order_no: { type: string }
+        order_type: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        calendar_date: { type: string, format: date }
+        shift_code: { type: string, enum: [DAY, NIGHT] }
+        shift_name_cn: { type: string }
+        plan_start_time: { type: string, format: date-time }
+        plan_finish_time: { type: string, format: date-time }
+        plan_qty: { type: number }
+        lock_flag: { type: integer, enum: [0, 1] }
+        priority: { type: integer }
+
+    VersionDiffResponse:
+      type: object
+      required: [request_id, base_version_no, compare_version_no]
+      properties:
+        request_id: { type: string }
+        base_version_no: { type: string }
+        compare_version_no: { type: string }
+        changed_order_count: { type: integer }
+        changed_task_count: { type: integer }
+        delayed_order_delta: { type: integer }
+        overloaded_process_delta: { type: integer }
+
+    DispatchCommandItem:
+      type: object
+      required: [command_id, command_type, target_order_no, target_order_type, effective_time, approved_flag, created_at]
+      properties:
+        command_id: { type: string }
+        command_type: { type: string, enum: [INSERT, LOCK, UNLOCK, PRIORITY, FREEZE, UNFREEZE] }
+        command_type_name_cn: { type: string }
+        target_order_no: { type: string }
+        target_order_type: { type: string, enum: [sales, production] }
+        effective_time: { type: string, format: date-time }
+        reason: { type: string }
+        created_by: { type: string }
+        approved_flag: { type: integer, enum: [0, 1] }
+        created_at: { type: string, format: date-time }
+
+    DispatchCommandRequest:
+      type: object
+      required: [request_id, command_type, target_order_no, target_order_type, effective_time, reason, created_by]
+      properties:
+        request_id: { type: string }
+        command_type: { type: string, enum: [INSERT, LOCK, UNLOCK, PRIORITY, FREEZE, UNFREEZE] }
+        target_order_no: { type: string }
+        target_order_type: { type: string, enum: [sales, production] }
+        effective_time: { type: string, format: date-time }
+        reason: { type: string }
+        created_by: { type: string }
+
+    DispatchApprovalRequest:
+      type: object
+      required: [request_id, approver, decision, decision_time]
+      properties:
+        request_id: { type: string }
+        approver: { type: string }
+        decision: { type: string, enum: [APPROVED, REJECTED] }
+        decision_reason: { type: string }
+        decision_time: { type: string, format: date-time }
+
+    VersionActionRequest:
+      type: object
+      required: [request_id, operator, reason]
+      properties:
+        request_id: { type: string }
+        operator: { type: string }
+        reason: { type: string }
+
+    AlertEventItem:
+      type: object
+      required: [alert_id, alert_type, severity, status, created_at]
+      properties:
+        alert_id: { type: string }
+        alert_type: { type: string }
+        severity: { type: string, enum: [INFO, WARN, CRITICAL] }
+        order_no: { type: string }
+        order_type: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        version_no: { type: string }
+        trigger_value: { type: number }
+        threshold_value: { type: number }
+        status: { type: string, enum: [OPEN, ACKED, CLOSED] }
+        status_name_cn: { type: string }
+        created_at: { type: string, format: date-time }
+
+    AlertActionRequest:
+      type: object
+      required: [request_id, operator]
+      properties:
+        request_id: { type: string }
+        operator: { type: string }
+        reason: { type: string }
+
+    ReplanJobRequest:
+      type: object
+      required: [request_id, trigger_type, scope_type, base_version_no, reason]
+      properties:
+        request_id: { type: string }
+        trigger_type: { type: string, enum: [DELAY, PROGRESS_GAP, EQUIPMENT_DOWN, INSERT_ORDER] }
+        scope_type: { type: string, enum: [LOCAL, GLOBAL] }
+        base_version_no: { type: string }
+        reason: { type: string }
+
+    ReplanJobResponse:
+      type: object
+      required: [request_id, job_no, status]
+      properties:
+        request_id: { type: string }
+        job_no: { type: string }
+        trigger_type: { type: string }
+        scope_type: { type: string }
+        base_version_no: { type: string }
+        result_version_no: { type: string }
+        status: { type: string, enum: [CREATED, RUNNING, DONE, FAILED] }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+
+    AuditLogItem:
+      type: object
+      required: [entity_type, entity_id, action, operator, operate_time]
+      properties:
+        entity_type: { type: string }
+        entity_id: { type: string }
+        action: { type: string }
+        action_name_cn: { type: string }
+        operator: { type: string }
+        request_id: { type: string }
+        operate_time: { type: string, format: date-time }
+        reason: { type: string }
+
+    IntegrationMessageItem:
+      type: object
+      required: [message_id, source, target, topic, status, retry_count, created_at, updated_at]
+      properties:
+        message_id: { type: string }
+        source: { type: string }
+        source_name_cn: { type: string }
+        target: { type: string }
+        target_name_cn: { type: string }
+        sync_flow_cn: { type: string }
+        topic: { type: string }
+        topic_name_cn: { type: string }
+        status: { type: string }
+        status_name_cn: { type: string }
+        retry_count: { type: integer }
+        error_msg: { type: string }
+        request_id: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    OutboxRetryRequest:
+      type: object
+      required: [request_id, operator]
+      properties:
+        request_id: { type: string }
+        operator: { type: string }
+
+    OrderPoolListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/OrderPoolItem' }
+
+    ScheduleVersionListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ScheduleVersionItem' }
+
+    ScheduleTaskListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/ScheduleTaskItem' }
+
+    DispatchCommandListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/DispatchCommandItem' }
+
+    AlertEventListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AlertEventItem' }
+
+    AuditLogListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/AuditLogItem' }
+
+    IntegrationMessageListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/IntegrationMessageItem' }
+
+    SimulationResetRequest:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+        seed: { type: integer, format: int64 }
+        scenario: { type: string, enum: [STABLE, TIGHT, BREAKDOWN] }
+        daily_sales_order_count: { type: integer, minimum: 1, maximum: 500 }
+
+    SimulationRunRequest:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+        days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+        daily_sales_order_count: { type: integer, minimum: 1, maximum: 500, default: 20 }
+        scenario: { type: string, enum: [STABLE, TIGHT, BREAKDOWN], default: STABLE }
+        seed: { type: integer, format: int64 }
+
+    ManualSimulationActionRequest:
+      type: object
+      required: [request_id]
+      properties:
+        request_id: { type: string }
+        scenario: { type: string, enum: [STABLE, TIGHT, BREAKDOWN] }
+        seed: { type: integer, format: int64 }
+        daily_sales_order_count: { type: integer, minimum: 1, maximum: 500 }
+
+    SimulationStateResponse:
+      type: object
+      required: [request_id, current_sim_date, seed, scenario, daily_sales_order_count]
+      properties:
+        request_id: { type: string }
+        current_sim_date: { type: string, format: date }
+        seed: { type: integer, format: int64 }
+        scenario: { type: string }
+        scenario_name_cn: { type: string }
+        daily_sales_order_count: { type: integer }
+        sales_order_total: { type: integer }
+        production_order_total: { type: integer }
+        order_pool_total: { type: integer }
+        event_total: { type: integer }
+        open_alert_total: { type: integer }
+        latest_version_no: { type: string }
+        published_version_no: { type: string }
+        manual_session_active: { type: boolean }
+        manual_snapshot_at: { type: string, format: date-time }
+        last_run_summary:
+          type: object
+          additionalProperties: true
+
+    ManualAddProductionOrderResponse:
+      type: object
+      required: [request_id, production_order_no, state]
+      properties:
+        request_id: { type: string }
+        production_order_no: { type: string }
+        sales_order_no: { type: string }
+        product_code: { type: string }
+        product_name_cn: { type: string }
+        order_qty: { type: number }
+        due_date: { type: string, format: date }
+        state: { $ref: '#/components/schemas/SimulationStateResponse' }
+
+    SimulationRunResponse:
+      type: object
+      required: [request_id, days, scenario, start_date, end_date]
+      properties:
+        request_id: { type: string }
+        days: { type: integer }
+        scenario: { type: string }
+        seed: { type: integer, format: int64 }
+        daily_sales_order_count: { type: integer }
+        start_date: { type: string, format: date }
+        end_date: { type: string, format: date }
+        new_sales_orders: { type: integer }
+        new_production_orders: { type: integer }
+        generated_versions: { type: integer }
+        reporting_count: { type: integer }
+        delayed_orders: { type: integer }
+        avg_capacity_factor: { type: number }
+        daily_kpis:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        state: { $ref: '#/components/schemas/SimulationStateResponse' }
+
+    SimulationEventItem:
+      type: object
+      required: [event_id, event_date, event_type, message]
+      properties:
+        event_id: { type: string }
+        event_date: { type: string, format: date }
+        event_type: { type: string }
+        event_type_name_cn: { type: string }
+        message: { type: string }
+        message_cn: { type: string }
+        request_id: { type: string }
+        sales_order_no: { type: string }
+        production_order_no: { type: string }
+        version_no: { type: string }
+        process_code: { type: string }
+        process_name_cn: { type: string }
+        product_name_cn: { type: string }
+        created_at: { type: string, format: date-time }
+
+    SimulationEventListResponse:
+      allOf:
+        - $ref: '#/components/schemas/BaseListResponse'
+        - type: object
+          properties:
+            items:
+              type: array
+              items: { $ref: '#/components/schemas/SimulationEventItem' }

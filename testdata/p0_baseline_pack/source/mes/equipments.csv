@@ -1,0 +1,3 @@
+﻿equipment_code,workshop_code,line_code,status,capacity_per_shift,last_update_time
+EQ-CL-01,WS-A,LINE-01,RUNNING,1000,2026-03-22 09:00:00
+EQ-CL-02,WS-A,LINE-02,RUNNING,1200,2026-03-22 09:00:00
