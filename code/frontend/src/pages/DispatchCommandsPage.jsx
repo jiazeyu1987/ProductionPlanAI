@@ -7,6 +7,7 @@ const commandOptions = [
   { value: "LOCK", label: "锁单" },
   { value: "UNLOCK", label: "解锁" },
   { value: "PRIORITY", label: "提优先级" },
+  { value: "UNPRIORITY", label: "解除优先级" },
   { value: "FREEZE", label: "冻结" },
   { value: "UNFREEZE", label: "解冻" }
 ];
@@ -18,7 +19,7 @@ export default function DispatchCommandsPage() {
 
   async function refresh() {
     const data = await loadList("/internal/v1/internal/dispatch-commands");
-    setRows(data.items);
+    setRows(data.items ?? []);
   }
 
   async function create() {

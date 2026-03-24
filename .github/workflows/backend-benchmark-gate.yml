@@ -1,0 +1,95 @@
+name: Backend Benchmark Gate
+
+on:
+  pull_request:
+    paths:
+      - "code/backend/**"
+      - ".github/workflows/backend-benchmark-gate.yml"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "code/backend/**"
+      - ".github/workflows/backend-benchmark-gate.yml"
+  schedule:
+    # 02:00 Asia/Shanghai (18:00 UTC previous day)
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Benchmark mode"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - light
+          - nightly
+
+jobs:
+  benchmark-light:
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || github.event.inputs.mode != 'nightly')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run PR benchmark (100/1000)
+        run: |
+          mvn -B --no-transfer-progress \
+            -Dtest=SchedulerBenchmarkSmokeTest \
+            -Dmvp.benchmark=true \
+            -Dmvp.benchmark.scales=100,1000 \
+            -Dmvp.benchmark.thresholds=100=2500,1000=8000 \
+            test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-light-surefire
+          path: code/backend/target/surefire-reports/*
+
+  benchmark-nightly:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'nightly')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: code/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Run nightly benchmark (5000)
+        run: |
+          mvn -B --no-transfer-progress \
+            -Dtest=SchedulerBenchmarkSmokeTest \
+            -Dmvp.benchmark=true \
+            -Dmvp.benchmark.scales=5000 \
+            -Dmvp.benchmark.thresholds=5000=25000 \
+            test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-nightly-surefire
+          path: code/backend/target/surefire-reports/*

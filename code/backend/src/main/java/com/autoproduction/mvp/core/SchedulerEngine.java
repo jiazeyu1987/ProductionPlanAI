@@ -15,6 +15,21 @@ import java.util.Set;
 
 final class SchedulerEngine {
   private static final double EPS = 1e-9d;
+  private static final String REASON_CAPACITY_MANPOWER = "CAPACITY_MANPOWER";
+  private static final String REASON_CAPACITY_MACHINE = "CAPACITY_MACHINE";
+  private static final String REASON_CAPACITY_UNKNOWN = "CAPACITY_UNKNOWN";
+  private static final String REASON_MATERIAL_SHORTAGE = "MATERIAL_SHORTAGE";
+  private static final String REASON_DEPENDENCY_BLOCKED = "DEPENDENCY_BLOCKED";
+  private static final String REASON_FROZEN_BY_POLICY = "FROZEN_BY_POLICY";
+  private static final String REASON_LOCKED_PRESERVED = "LOCKED_PRESERVED";
+  private static final String DEPENDENCY_READY = "READY";
+  private static final String DEPENDENCY_WAIT_PREDECESSOR = "WAIT_PREDECESSOR";
+  private static final String DEPENDENCY_BLOCKED_PREDECESSOR = "BLOCKED_BY_PREDECESSOR";
+  private static final String TASK_STATUS_READY = "READY";
+  private static final String TASK_STATUS_PARTIALLY_ALLOCATED = "PARTIALLY_ALLOCATED";
+  private static final String TASK_STATUS_UNSCHEDULED = "UNSCHEDULED";
+  private static final String TASK_STATUS_PRESERVED_LOCKED = "PRESERVED_LOCKED";
+  private static final String TASK_STATUS_SKIPPED_FROZEN = "SKIPPED_FROZEN";
 
   private SchedulerEngine() {}
 
@@ -24,12 +39,27 @@ final class SchedulerEngine {
     String requestId,
     String versionNo
   ) {
+    return generate(state, orders, requestId, versionNo, null, Set.of());
+  }
+
+  static MvpDomain.ScheduleVersion generate(
+    MvpDomain.State state,
+    List<MvpDomain.Order> orders,
+    String requestId,
+    String versionNo,
+    MvpDomain.ScheduleVersion baseVersion,
+    Set<String> lockedOrders
+  ) {
     validateInput(state);
+    Set<String> lockedOrderSet = lockedOrders == null ? Set.of() : new HashSet<>(lockedOrders);
 
     List<Map<String, Object>> shifts = buildShifts(state);
     Map<String, Integer> workerByShiftProcess = resourceIndex(state.workerPools);
     Map<String, Integer> machineByShiftProcess = resourceIndex(state.machinePools);
     Map<String, Double> materialByShiftProductProcess = materialIndex(state.materialAvailability);
+    Map<String, Integer> maxWorkersByProcess = maxResourceByProcess(state.workerPools);
+    Map<String, Integer> maxMachinesByProcess = maxResourceByProcess(state.machinePools);
+    Map<String, Double> totalMaterialByProductProcess = totalMaterialByProductProcess(state.materialAvailability);
     Map<String, MvpDomain.ProcessConfig> processConfigMap = new HashMap<>();
     for (MvpDomain.ProcessConfig process : state.processes) {
       processConfigMap.put(process.processCode, process);
@@ -41,14 +71,18 @@ final class SchedulerEngine {
       .thenComparing(o -> o.dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
       .thenComparing(o -> o.orderNo));
 
+    Map<String, MvpDomain.Order> orderByNo = new HashMap<>();
     Map<String, MvpDomain.ScheduleTask> tasks = new LinkedHashMap<>();
+    Map<String, List<MvpDomain.ScheduleTask>> tasksByOrder = new HashMap<>();
     List<Map<String, Object>> unscheduled = new ArrayList<>();
     Map<String, Integer> shiftWorkersUsed = new HashMap<>();
     Map<String, Integer> shiftMachinesUsed = new HashMap<>();
     Map<String, Double> shiftMaterialUsed = new HashMap<>();
+    Map<String, ReasonInfo> lastBlockedByTask = new HashMap<>();
     List<MvpDomain.Allocation> allocations = new ArrayList<>();
 
     for (MvpDomain.Order order : sortedOrders) {
+      orderByNo.put(order.orderNo, order);
       List<MvpDomain.OrderItem> items = order.items == null ? List.of() : order.items;
       for (int itemIndex = 0; itemIndex < items.size(); itemIndex += 1) {
         MvpDomain.OrderItem item = items.get(itemIndex);
@@ -67,9 +101,40 @@ final class SchedulerEngine {
           task.targetQty = Math.max(0d, item.qty - item.completedQty);
           task.producedQty = 0d;
           tasks.put(task.taskKey, task);
+          tasksByOrder.computeIfAbsent(order.orderNo, ignored -> new ArrayList<>()).add(task);
         }
       }
     }
+
+    List<MvpDomain.Order> schedulableOrders = new ArrayList<>();
+    for (MvpDomain.Order order : sortedOrders) {
+      if (order.frozen || lockedOrderSet.contains(order.orderNo)) {
+        continue;
+      }
+      if (!tasksByOrder.containsKey(order.orderNo)) {
+        continue;
+      }
+      schedulableOrders.add(order);
+    }
+
+    Set<String> openShiftIds = new HashSet<>();
+    for (Map<String, Object> shift : shifts) {
+      openShiftIds.add(String.valueOf(shift.get("shiftId")));
+    }
+    Set<String> preservedLockedTaskKeys = new HashSet<>();
+    int preservedLockedAllocationCount = applyBaselineLockedAllocations(
+      baseVersion,
+      lockedOrderSet,
+      tasks,
+      orderByNo,
+      openShiftIds,
+      processConfigMap,
+      shiftWorkersUsed,
+      shiftMachinesUsed,
+      shiftMaterialUsed,
+      allocations,
+      preservedLockedTaskKeys
+    );
 
     for (Map<String, Object> shift : shifts) {
       String shiftId = String.valueOf(shift.get("shiftId"));
@@ -77,25 +142,34 @@ final class SchedulerEngine {
       String shiftCode = String.valueOf(shift.get("shiftCode"));
       Map<String, Double> producedBeforeShift = snapshotProduced(tasks);
 
-      for (MvpDomain.Order order : sortedOrders) {
-        if (order.frozen) {
-          continue;
-        }
-        for (MvpDomain.ScheduleTask task : tasks.values()) {
-          if (!Objects.equals(task.orderNo, order.orderNo)) {
-            continue;
-          }
+      for (MvpDomain.Order order : schedulableOrders) {
+        List<MvpDomain.ScheduleTask> orderTasks = tasksByOrder.getOrDefault(order.orderNo, List.of());
+        for (MvpDomain.ScheduleTask task : orderTasks) {
           double remainingQty = round3(task.targetQty - task.producedQty);
           if (remainingQty <= EPS) {
+            lastBlockedByTask.remove(task.taskKey);
             continue;
           }
           MvpDomain.ProcessConfig processConfig = processConfigMap.get(task.processCode);
           if (processConfig == null) {
+            lastBlockedByTask.put(
+              task.taskKey,
+              ReasonInfo.capacity(
+                REASON_CAPACITY_UNKNOWN,
+                "Process config is missing, capacity cannot be resolved.",
+                "UNKNOWN",
+                task.processCode,
+                0,
+                0,
+                0d
+              )
+            );
             continue;
           }
 
           double allowance = calcAllowance(task, tasks, producedBeforeShift);
           if (allowance <= EPS) {
+            lastBlockedByTask.put(task.taskKey, dependencyBlockedReason(task, tasks, producedBeforeShift));
             continue;
           }
 
@@ -111,6 +185,34 @@ final class SchedulerEngine {
           int groupsByMachines = machinesRemaining / Math.max(1, processConfig.requiredMachines);
           int maxGroups = Math.min(groupsByWorkers, groupsByMachines);
           if (maxGroups <= 0) {
+            String reasonCode = capacityReasonCode(groupsByWorkers, groupsByMachines);
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("workers_available", workersAvailable);
+            evidence.put("workers_used", workersUsed);
+            evidence.put("workers_remaining", workersRemaining);
+            evidence.put("workers_required_per_group", processConfig.requiredWorkers);
+            evidence.put("machines_available", machinesAvailable);
+            evidence.put("machines_used", machinesUsed);
+            evidence.put("machines_remaining", machinesRemaining);
+            evidence.put("machines_required_per_group", processConfig.requiredMachines);
+            evidence.put("remaining_qty", remainingQty);
+            evidence.put("allowance_qty", allowance);
+            evidence.put("process_code", task.processCode);
+            lastBlockedByTask.put(
+              task.taskKey,
+              new ReasonInfo(
+                reasonCode,
+                reasonCode.equals(REASON_CAPACITY_MANPOWER)
+                  ? "Available manpower cannot satisfy required worker groups."
+                  : reasonCode.equals(REASON_CAPACITY_MACHINE)
+                    ? "Available machines cannot satisfy required machine groups."
+                    : "Resource capacity is insufficient in this shift.",
+                "ENGINE",
+                "CAPACITY",
+                dependencyStatusAtShift(task, tasks, producedBeforeShift),
+                evidence
+              )
+            );
             continue;
           }
           double capacityByResources = maxGroups * processConfig.capacityPerShift;
@@ -120,11 +222,45 @@ final class SchedulerEngine {
           double materialUsed = shiftMaterialUsed.getOrDefault(materialKey, 0d);
           double materialRemaining = Math.max(0d, materialAvailable - materialUsed);
           if (materialRemaining <= EPS) {
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("process_code", task.processCode);
+            evidence.put("product_code", task.productCode);
+            evidence.put("material_available", round3(materialAvailable));
+            evidence.put("material_used", round3(materialUsed));
+            evidence.put("material_remaining", round3(materialRemaining));
+            evidence.put("remaining_qty", remainingQty);
+            lastBlockedByTask.put(
+              task.taskKey,
+              new ReasonInfo(
+                REASON_MATERIAL_SHORTAGE,
+                "Material is exhausted in this shift for product/process.",
+                "ENGINE",
+                "MATERIAL",
+                dependencyStatusAtShift(task, tasks, producedBeforeShift),
+                evidence
+              )
+            );
             continue;
           }
 
           double schedulable = Math.min(Math.min(remainingQty, allowance), Math.min(capacityByResources, materialRemaining));
           if (schedulable <= EPS) {
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("remaining_qty", remainingQty);
+            evidence.put("allowance_qty", allowance);
+            evidence.put("capacity_qty", round3(capacityByResources));
+            evidence.put("material_remaining", round3(materialRemaining));
+            lastBlockedByTask.put(
+              task.taskKey,
+              new ReasonInfo(
+                REASON_CAPACITY_UNKNOWN,
+                "No allocatable quantity after constraint evaluation.",
+                "ENGINE",
+                "UNKNOWN",
+                dependencyStatusAtShift(task, tasks, producedBeforeShift),
+                evidence
+              )
+            );
             continue;
           }
 
@@ -149,22 +285,113 @@ final class SchedulerEngine {
           allocation.machinesUsed = groupsUsed * processConfig.requiredMachines;
           allocation.groupsUsed = groupsUsed;
           allocations.add(allocation);
+
+          double remainingAfter = round3(task.targetQty - task.producedQty);
+          if (remainingAfter <= EPS) {
+            lastBlockedByTask.remove(task.taskKey);
+          } else if (allowance <= capacityByResources + EPS && allowance <= materialRemaining + EPS) {
+            lastBlockedByTask.put(task.taskKey, dependencyBlockedReason(task, tasks, producedBeforeShift));
+          } else if (materialRemaining <= capacityByResources + EPS) {
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("process_code", task.processCode);
+            evidence.put("product_code", task.productCode);
+            evidence.put("material_remaining", round3(materialRemaining));
+            evidence.put("remaining_after_shift", remainingAfter);
+            lastBlockedByTask.put(
+              task.taskKey,
+              new ReasonInfo(
+                REASON_MATERIAL_SHORTAGE,
+                "Material remaining quantity is the binding constraint in current shift.",
+                "ENGINE",
+                "MATERIAL",
+                dependencyStatusAtShift(task, tasks, producedBeforeShift),
+                evidence
+              )
+            );
+          } else {
+            String reasonCode = capacityReasonCode(groupsByWorkers, groupsByMachines);
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            evidence.put("process_code", task.processCode);
+            evidence.put("capacity_by_resources", round3(capacityByResources));
+            evidence.put("remaining_after_shift", remainingAfter);
+            evidence.put("workers_remaining", workersRemaining);
+            evidence.put("machines_remaining", machinesRemaining);
+            evidence.put("workers_required_per_group", processConfig.requiredWorkers);
+            evidence.put("machines_required_per_group", processConfig.requiredMachines);
+            lastBlockedByTask.put(
+              task.taskKey,
+              new ReasonInfo(
+                reasonCode,
+                reasonCode.equals(REASON_CAPACITY_MANPOWER)
+                  ? "Worker capacity is the binding constraint in current shift."
+                  : reasonCode.equals(REASON_CAPACITY_MACHINE)
+                    ? "Machine capacity is the binding constraint in current shift."
+                    : "Resource capacity is the binding constraint in current shift.",
+                "ENGINE",
+                "CAPACITY",
+                dependencyStatusAtShift(task, tasks, producedBeforeShift),
+                evidence
+              )
+            );
+          }
         }
       }
     }
 
     for (MvpDomain.ScheduleTask task : tasks.values()) {
       double remaining = round3(task.targetQty - task.producedQty);
+      MvpDomain.Order order = orderByNo.get(task.orderNo);
+      task.dependencyStatus = dependencyStatusAtVersionEnd(task, tasks);
+      task.taskStatus = resolveTaskStatus(task, order, remaining);
       if (remaining <= EPS) {
+        task.lastBlockReason = null;
+        task.lastBlockReasonDetail = null;
+        task.lastBlockingDimension = null;
+        task.lastBlockEvidence = new LinkedHashMap<>();
         continue;
       }
+      ReasonInfo reasonInfo;
+      if (order != null && order.frozen) {
+        reasonInfo = frozenReason(task);
+      } else if (order != null && lockedOrderSet.contains(order.orderNo)) {
+        reasonInfo = lockedPreservedReason(
+          task,
+          preservedLockedTaskKeys.contains(task.taskKey),
+          baseVersion == null ? null : baseVersion.versionNo
+        );
+      } else {
+        reasonInfo = lastBlockedByTask.get(task.taskKey);
+      }
+      if (reasonInfo == null) {
+        reasonInfo = diagnoseUnscheduledReason(
+          task,
+          order,
+          tasks,
+          processConfigMap,
+          maxWorkersByProcess,
+          maxMachinesByProcess,
+          totalMaterialByProductProcess
+        );
+      }
+      task.lastBlockReason = reasonInfo.reasonCode;
+      task.lastBlockReasonDetail = reasonInfo.reasonDetail;
+      task.lastBlockingDimension = reasonInfo.blockingDimension;
+      task.lastBlockEvidence = new LinkedHashMap<>(reasonInfo.evidence);
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("taskKey", task.taskKey);
       row.put("orderNo", task.orderNo);
       row.put("productCode", task.productCode);
       row.put("processCode", task.processCode);
       row.put("remainingQty", remaining);
-      row.put("reasons", List.of("CAPACITY_LIMIT"));
+      row.put("reason_code", reasonInfo.reasonCode);
+      row.put("reason_detail", reasonInfo.reasonDetail);
+      row.put("reason_source", reasonInfo.reasonSource);
+      row.put("blocking_dimension", reasonInfo.blockingDimension);
+      row.put("dependency_status", reasonInfo.dependencyStatus);
+      row.put("task_status", task.taskStatus);
+      row.put("last_block_reason", reasonInfo.reasonCode);
+      row.put("evidence", new LinkedHashMap<>(reasonInfo.evidence));
+      row.put("reasons", reasonCodesForCompatibility(reasonInfo.reasonCode));
       unscheduled.add(row);
     }
 
@@ -182,7 +409,28 @@ final class SchedulerEngine {
     result.metadata = new HashMap<>();
     result.metadata.put("hardConstraints", List.of("MAN", "MACHINE", "MATERIAL"));
     result.metadata.put("dependencyTypes", List.of("FS", "SS"));
+    result.metadata.put("reasonCodes", List.of(
+      REASON_CAPACITY_MANPOWER,
+      REASON_CAPACITY_MACHINE,
+      REASON_CAPACITY_UNKNOWN,
+      REASON_MATERIAL_SHORTAGE,
+      REASON_DEPENDENCY_BLOCKED,
+      REASON_FROZEN_BY_POLICY,
+      REASON_LOCKED_PRESERVED
+    ));
+    result.metadata.put("dependencyStatuses", List.of(
+      DEPENDENCY_READY,
+      DEPENDENCY_WAIT_PREDECESSOR,
+      DEPENDENCY_BLOCKED_PREDECESSOR
+    ));
+    result.metadata.put("showDetailedReasons", true);
     result.metadata.put("filteredFrozenOrders", sortedOrders.stream().filter(o -> o.frozen).map(o -> o.orderNo).toList());
+    List<String> lockedOrderList = new ArrayList<>(lockedOrderSet);
+    lockedOrderList.sort(String::compareTo);
+    result.metadata.put("lockedOrders", lockedOrderList);
+    result.metadata.put("baselineVersionNo", baseVersion == null ? null : baseVersion.versionNo);
+    result.metadata.put("preservedLockedTaskCount", preservedLockedTaskKeys.size());
+    result.metadata.put("preservedLockedAllocationCount", preservedLockedAllocationCount);
     return result;
   }
 
@@ -195,6 +443,167 @@ final class SchedulerEngine {
     out.put("violationCount", violations.size());
     out.put("violations", violations);
     return out;
+  }
+
+  private static int applyBaselineLockedAllocations(
+    MvpDomain.ScheduleVersion baseVersion,
+    Set<String> lockedOrderSet,
+    Map<String, MvpDomain.ScheduleTask> tasks,
+    Map<String, MvpDomain.Order> orderByNo,
+    Set<String> openShiftIds,
+    Map<String, MvpDomain.ProcessConfig> processConfigMap,
+    Map<String, Integer> shiftWorkersUsed,
+    Map<String, Integer> shiftMachinesUsed,
+    Map<String, Double> shiftMaterialUsed,
+    List<MvpDomain.Allocation> allocations,
+    Set<String> preservedLockedTaskKeys
+  ) {
+    if (baseVersion == null || baseVersion.allocations == null || baseVersion.allocations.isEmpty() || lockedOrderSet.isEmpty()) {
+      return 0;
+    }
+
+    int preservedCount = 0;
+    for (MvpDomain.Allocation source : baseVersion.allocations) {
+      if (source == null || source.orderNo == null || !lockedOrderSet.contains(source.orderNo)) {
+        continue;
+      }
+      MvpDomain.Order order = orderByNo.get(source.orderNo);
+      if (order == null || order.frozen) {
+        continue;
+      }
+      if (source.shiftId == null || !openShiftIds.contains(source.shiftId)) {
+        continue;
+      }
+      MvpDomain.ScheduleTask task = tasks.get(source.taskKey);
+      if (task == null || !Objects.equals(task.orderNo, source.orderNo)) {
+        continue;
+      }
+
+      double remainingQty = round3(task.targetQty - task.producedQty);
+      if (remainingQty <= EPS) {
+        continue;
+      }
+      double baselineQty = round3(source.scheduledQty);
+      if (baselineQty <= EPS) {
+        continue;
+      }
+      double preservedQty = round3(Math.min(remainingQty, baselineQty));
+      if (preservedQty <= EPS) {
+        continue;
+      }
+
+      MvpDomain.ProcessConfig processConfig = processConfigMap.get(task.processCode);
+      int groupsUsed = resolveGroupsUsed(source, processConfig, preservedQty);
+      int workersUsed = resolveResourceUsed(
+        source.workersUsed,
+        source.scheduledQty,
+        preservedQty,
+        groupsUsed,
+        processConfig == null ? 0 : processConfig.requiredWorkers
+      );
+      int machinesUsed = resolveResourceUsed(
+        source.machinesUsed,
+        source.scheduledQty,
+        preservedQty,
+        groupsUsed,
+        processConfig == null ? 0 : processConfig.requiredMachines
+      );
+
+      String processUsageKey = source.shiftId + "#" + task.processCode;
+      shiftWorkersUsed.put(processUsageKey, shiftWorkersUsed.getOrDefault(processUsageKey, 0) + workersUsed);
+      shiftMachinesUsed.put(processUsageKey, shiftMachinesUsed.getOrDefault(processUsageKey, 0) + machinesUsed);
+      String materialKey = source.shiftId + "#" + task.productCode + "#" + task.processCode;
+      shiftMaterialUsed.put(materialKey, round3(shiftMaterialUsed.getOrDefault(materialKey, 0d) + preservedQty));
+
+      task.producedQty = round3(task.producedQty + preservedQty);
+
+      MvpDomain.Allocation preserved = new MvpDomain.Allocation();
+      preserved.taskKey = task.taskKey;
+      preserved.orderNo = task.orderNo;
+      preserved.productCode = task.productCode;
+      preserved.processCode = task.processCode;
+      preserved.dependencyType = task.dependencyType;
+      preserved.shiftId = source.shiftId;
+      preserved.date = source.date;
+      preserved.shiftCode = source.shiftCode;
+      preserved.scheduledQty = preservedQty;
+      preserved.workersUsed = workersUsed;
+      preserved.machinesUsed = machinesUsed;
+      preserved.groupsUsed = groupsUsed;
+      allocations.add(preserved);
+
+      preservedLockedTaskKeys.add(task.taskKey);
+      preservedCount += 1;
+    }
+    return preservedCount;
+  }
+
+  private static int resolveGroupsUsed(
+    MvpDomain.Allocation source,
+    MvpDomain.ProcessConfig processConfig,
+    double preservedQty
+  ) {
+    int groupsUsed = 0;
+    if (source.groupsUsed > 0) {
+      if (source.scheduledQty > EPS) {
+        groupsUsed = (int) Math.ceil(source.groupsUsed * preservedQty / source.scheduledQty);
+      } else {
+        groupsUsed = source.groupsUsed;
+      }
+    }
+    if (groupsUsed <= 0 && processConfig != null) {
+      groupsUsed = (int) Math.ceil(preservedQty / Math.max(1d, processConfig.capacityPerShift));
+    }
+    return Math.max(1, groupsUsed);
+  }
+
+  private static int resolveResourceUsed(
+    int baselineUsed,
+    double baselineQty,
+    double preservedQty,
+    int groupsUsed,
+    int requiredPerGroup
+  ) {
+    if (baselineUsed > 0 && baselineQty > EPS) {
+      return Math.max(1, (int) Math.ceil((baselineUsed * preservedQty) / baselineQty));
+    }
+    if (baselineUsed > 0) {
+      return baselineUsed;
+    }
+    if (requiredPerGroup <= 0) {
+      return 0;
+    }
+    return groupsUsed * requiredPerGroup;
+  }
+
+  private static ReasonInfo lockedPreservedReason(
+    MvpDomain.ScheduleTask task,
+    boolean preservedFromBaseline,
+    String baselineVersionNo
+  ) {
+    Map<String, Object> evidence = new LinkedHashMap<>();
+    evidence.put("order_no", task.orderNo);
+    evidence.put("task_key", task.taskKey);
+    evidence.put("process_code", task.processCode);
+    evidence.put("baseline_version_no", baselineVersionNo == null ? "" : baselineVersionNo);
+    evidence.put("baseline_resolved", baselineVersionNo != null && !baselineVersionNo.isBlank());
+    evidence.put("task_preserved_from_baseline", preservedFromBaseline);
+    String detail;
+    if (baselineVersionNo == null || baselineVersionNo.isBlank()) {
+      detail = "Locked order skipped because no baseline version was provided.";
+    } else if (!preservedFromBaseline) {
+      detail = "Locked order has no baseline allocation for this task; task remains unscheduled.";
+    } else {
+      detail = "Locked order preserved from baseline; remaining quantity is not replanned.";
+    }
+    return new ReasonInfo(
+      REASON_LOCKED_PRESERVED,
+      detail,
+      "POLICY",
+      "POLICY",
+      "SKIPPED_LOCKED",
+      evidence
+    );
   }
 
   private static void validateInput(MvpDomain.State state) {
@@ -249,10 +658,26 @@ final class SchedulerEngine {
     return out;
   }
 
+  private static Map<String, Integer> maxResourceByProcess(List<MvpDomain.ResourceRow> rows) {
+    Map<String, Integer> out = new HashMap<>();
+    for (MvpDomain.ResourceRow row : rows) {
+      out.merge(row.processCode, row.available, Math::max);
+    }
+    return out;
+  }
+
   private static Map<String, Double> materialIndex(List<MvpDomain.MaterialRow> rows) {
     Map<String, Double> out = new HashMap<>();
     for (MvpDomain.MaterialRow row : rows) {
       out.put(row.date + "#" + row.shiftCode + "#" + row.productCode + "#" + row.processCode, row.availableQty);
+    }
+    return out;
+  }
+
+  private static Map<String, Double> totalMaterialByProductProcess(List<MvpDomain.MaterialRow> rows) {
+    Map<String, Double> out = new HashMap<>();
+    for (MvpDomain.MaterialRow row : rows) {
+      out.merge(row.productCode + "#" + row.processCode, row.availableQty, Double::sum);
     }
     return out;
   }
@@ -287,6 +712,234 @@ final class SchedulerEngine {
     return Math.max(0d, round3(predecessor.producedQty - task.producedQty));
   }
 
+  private static ReasonInfo dependencyBlockedReason(
+    MvpDomain.ScheduleTask task,
+    Map<String, MvpDomain.ScheduleTask> tasks,
+    Map<String, Double> producedBeforeShift
+  ) {
+    MvpDomain.ScheduleTask predecessor = task.predecessorTaskKey == null ? null : tasks.get(task.predecessorTaskKey);
+    double predecessorBeforeShift = task.predecessorTaskKey == null
+      ? 0d
+      : producedBeforeShift.getOrDefault(task.predecessorTaskKey, 0d);
+    double predecessorProduced = predecessor == null ? 0d : predecessor.producedQty;
+    Map<String, Object> evidence = new LinkedHashMap<>();
+    evidence.put("predecessor_task_key", task.predecessorTaskKey);
+    evidence.put("dependency_type", task.dependencyType);
+    evidence.put("predecessor_produced_before_shift", round3(predecessorBeforeShift));
+    evidence.put("predecessor_produced_qty", round3(predecessorProduced));
+    evidence.put("current_produced_qty", round3(task.producedQty));
+    return new ReasonInfo(
+      REASON_DEPENDENCY_BLOCKED,
+      "Task is waiting for predecessor output release.",
+      "ENGINE",
+      "DEPENDENCY",
+      dependencyStatusAtShift(task, tasks, producedBeforeShift),
+      evidence
+    );
+  }
+
+  private static ReasonInfo frozenReason(MvpDomain.ScheduleTask task) {
+    Map<String, Object> evidence = new LinkedHashMap<>();
+    evidence.put("order_no", task.orderNo);
+    evidence.put("task_key", task.taskKey);
+    evidence.put("process_code", task.processCode);
+    return new ReasonInfo(
+      REASON_FROZEN_BY_POLICY,
+      "Task skipped because the order is frozen by policy.",
+      "POLICY",
+      "POLICY",
+      TASK_STATUS_SKIPPED_FROZEN,
+      evidence
+    );
+  }
+
+  private static ReasonInfo diagnoseUnscheduledReason(
+    MvpDomain.ScheduleTask task,
+    MvpDomain.Order order,
+    Map<String, MvpDomain.ScheduleTask> allTasks,
+    Map<String, MvpDomain.ProcessConfig> processConfigMap,
+    Map<String, Integer> maxWorkersByProcess,
+    Map<String, Integer> maxMachinesByProcess,
+    Map<String, Double> totalMaterialByProductProcess
+  ) {
+    if (order != null && order.frozen) {
+      return frozenReason(task);
+    }
+
+    String dependencyStatus = dependencyStatusAtVersionEnd(task, allTasks);
+    if (!DEPENDENCY_READY.equals(dependencyStatus)) {
+      Map<String, Object> evidence = new LinkedHashMap<>();
+      evidence.put("predecessor_task_key", task.predecessorTaskKey);
+      MvpDomain.ScheduleTask predecessor = task.predecessorTaskKey == null ? null : allTasks.get(task.predecessorTaskKey);
+      evidence.put("predecessor_produced_qty", round3(predecessor == null ? 0d : predecessor.producedQty));
+      evidence.put("current_produced_qty", round3(task.producedQty));
+      return new ReasonInfo(
+        REASON_DEPENDENCY_BLOCKED,
+        "Task is blocked by predecessor completion/release state.",
+        "ENGINE",
+        "DEPENDENCY",
+        dependencyStatus,
+        evidence
+      );
+    }
+
+    MvpDomain.ProcessConfig processConfig = processConfigMap.get(task.processCode);
+    if (processConfig == null) {
+      return ReasonInfo.capacity(
+        REASON_CAPACITY_UNKNOWN,
+        "Process config is missing, capacity cannot be resolved.",
+        "UNKNOWN",
+        task.processCode,
+        0,
+        0,
+        0d
+      );
+    }
+
+    int workersCapacity = maxWorkersByProcess.getOrDefault(task.processCode, 0);
+    if (workersCapacity < Math.max(1, processConfig.requiredWorkers)) {
+      return ReasonInfo.capacity(
+        REASON_CAPACITY_MANPOWER,
+        "Available manpower does not meet minimum required workers.",
+        "MANPOWER",
+        task.processCode,
+        workersCapacity,
+        processConfig.requiredWorkers,
+        0d
+      );
+    }
+
+    int machinesCapacity = maxMachinesByProcess.getOrDefault(task.processCode, 0);
+    if (machinesCapacity < Math.max(1, processConfig.requiredMachines)) {
+      return ReasonInfo.capacity(
+        REASON_CAPACITY_MACHINE,
+        "Available machines do not meet minimum required machines.",
+        "MACHINE",
+        task.processCode,
+        machinesCapacity,
+        processConfig.requiredMachines,
+        0d
+      );
+    }
+
+    double materialTotal = totalMaterialByProductProcess.getOrDefault(task.productCode + "#" + task.processCode, 0d);
+    if (materialTotal <= EPS) {
+      return ReasonInfo.capacity(
+        REASON_MATERIAL_SHORTAGE,
+        "No material is available in planning horizon.",
+        "MATERIAL",
+        task.processCode,
+        0,
+        0,
+        materialTotal
+      );
+    }
+
+    return ReasonInfo.capacity(
+      REASON_CAPACITY_UNKNOWN,
+      "Task is unscheduled after applying all constraints in horizon.",
+      "UNKNOWN",
+      task.processCode,
+      workersCapacity,
+      machinesCapacity,
+      materialTotal
+    );
+  }
+
+  private static String capacityReasonCode(int groupsByWorkers, int groupsByMachines) {
+    if (groupsByWorkers < groupsByMachines) {
+      return REASON_CAPACITY_MANPOWER;
+    }
+    if (groupsByMachines < groupsByWorkers) {
+      return REASON_CAPACITY_MACHINE;
+    }
+    return REASON_CAPACITY_UNKNOWN;
+  }
+
+  private static List<String> reasonCodesForCompatibility(String reasonCode) {
+    List<String> out = new ArrayList<>();
+    out.add(reasonCode);
+    String legacyReason = toLegacyReasonCode(reasonCode);
+    if (!legacyReason.equals(reasonCode)) {
+      out.add(legacyReason);
+    }
+    return out;
+  }
+
+  private static String toLegacyReasonCode(String reasonCode) {
+    return switch (reasonCode) {
+      case REASON_CAPACITY_MANPOWER, REASON_CAPACITY_MACHINE, REASON_MATERIAL_SHORTAGE, REASON_CAPACITY_UNKNOWN -> "CAPACITY_LIMIT";
+      case REASON_DEPENDENCY_BLOCKED -> "DEPENDENCY_LIMIT";
+      default -> reasonCode;
+    };
+  }
+
+  private static String dependencyStatusAtVersionEnd(
+    MvpDomain.ScheduleTask task,
+    Map<String, MvpDomain.ScheduleTask> tasks
+  ) {
+    if (task.predecessorTaskKey == null || task.predecessorTaskKey.isBlank()) {
+      return DEPENDENCY_READY;
+    }
+    MvpDomain.ScheduleTask predecessor = tasks.get(task.predecessorTaskKey);
+    if (predecessor == null) {
+      return DEPENDENCY_BLOCKED_PREDECESSOR;
+    }
+    double released = predecessor.producedQty - task.producedQty;
+    if (released > EPS) {
+      return DEPENDENCY_READY;
+    }
+    if (predecessor.producedQty + EPS < predecessor.targetQty || predecessor.producedQty <= EPS) {
+      return DEPENDENCY_WAIT_PREDECESSOR;
+    }
+    return DEPENDENCY_BLOCKED_PREDECESSOR;
+  }
+
+  private static String dependencyStatusAtShift(
+    MvpDomain.ScheduleTask task,
+    Map<String, MvpDomain.ScheduleTask> tasks,
+    Map<String, Double> producedBeforeShift
+  ) {
+    if (task.predecessorTaskKey == null || task.predecessorTaskKey.isBlank()) {
+      return DEPENDENCY_READY;
+    }
+    MvpDomain.ScheduleTask predecessor = tasks.get(task.predecessorTaskKey);
+    if (predecessor == null) {
+      return DEPENDENCY_BLOCKED_PREDECESSOR;
+    }
+    double predecessorReferenceQty = "FS".equals(task.dependencyType)
+      ? producedBeforeShift.getOrDefault(task.predecessorTaskKey, 0d)
+      : predecessor.producedQty;
+    double released = predecessorReferenceQty - task.producedQty;
+    if (released > EPS) {
+      return DEPENDENCY_READY;
+    }
+    if (predecessorReferenceQty + EPS < predecessor.targetQty || predecessorReferenceQty <= EPS) {
+      return DEPENDENCY_WAIT_PREDECESSOR;
+    }
+    return DEPENDENCY_BLOCKED_PREDECESSOR;
+  }
+
+  private static String resolveTaskStatus(
+    MvpDomain.ScheduleTask task,
+    MvpDomain.Order order,
+    double remainingQty
+  ) {
+    if (order != null && order.frozen) {
+      return TASK_STATUS_SKIPPED_FROZEN;
+    }
+    if (order != null && order.lockFlag && remainingQty > EPS) {
+      return TASK_STATUS_PRESERVED_LOCKED;
+    }
+    if (remainingQty <= EPS) {
+      return TASK_STATUS_READY;
+    }
+    if (task.producedQty > EPS) {
+      return TASK_STATUS_PARTIALLY_ALLOCATED;
+    }
+    return TASK_STATUS_UNSCHEDULED;
+  }
+
   private static Map<String, Object> buildMetrics(
     Iterable<MvpDomain.ScheduleTask> tasks,
     List<MvpDomain.Allocation> allocations,
@@ -300,14 +953,36 @@ final class SchedulerEngine {
       targetQty += task.targetQty;
       producedQty += task.producedQty;
     }
+    double scheduleCompletionRate = targetQty > EPS ? round3((producedQty / targetQty) * 100d) : 0d;
+    Map<String, Integer> reasonDistribution = buildReasonDistribution(unscheduled);
     Map<String, Object> metrics = new LinkedHashMap<>();
     metrics.put("taskCount", taskCount);
+    metrics.put("task_count", taskCount);
     metrics.put("allocationCount", allocations.size());
+    metrics.put("allocation_count", allocations.size());
     metrics.put("targetQty", round3(targetQty));
+    metrics.put("target_qty", round3(targetQty));
     metrics.put("scheduledQty", round3(producedQty));
-    metrics.put("scheduleCompletionRate", targetQty > EPS ? round3((producedQty / targetQty) * 100d) : 0d);
+    metrics.put("scheduled_qty", round3(producedQty));
+    metrics.put("scheduleCompletionRate", scheduleCompletionRate);
+    metrics.put("schedule_completion_rate", scheduleCompletionRate);
     metrics.put("unscheduledTaskCount", unscheduled.size());
+    metrics.put("unscheduled_task_count", unscheduled.size());
+    metrics.put("unscheduledReasonDistribution", new LinkedHashMap<>(reasonDistribution));
+    metrics.put("unscheduled_reason_distribution", new LinkedHashMap<>(reasonDistribution));
     return metrics;
+  }
+
+  private static Map<String, Integer> buildReasonDistribution(List<Map<String, Object>> unscheduled) {
+    Map<String, Integer> reasonDistribution = new LinkedHashMap<>();
+    for (Map<String, Object> row : unscheduled) {
+      String reasonCode = String.valueOf(row.getOrDefault("reason_code", ""));
+      if (reasonCode == null || reasonCode.isBlank()) {
+        continue;
+      }
+      reasonDistribution.merge(reasonCode, 1, Integer::sum);
+    }
+    return reasonDistribution;
   }
 
   private static void validateDependencies(MvpDomain.ScheduleVersion schedule, List<Map<String, Object>> violations) {
@@ -349,6 +1024,65 @@ final class SchedulerEngine {
       row.put("taskKey", allocation.taskKey);
       violations.add(row);
       return;
+    }
+  }
+
+  private static Set<String> normalizeOrderNoSet(Set<String> orderNos) {
+    Set<String> out = new HashSet<>();
+    if (orderNos == null) {
+      return out;
+    }
+    for (String orderNo : orderNos) {
+      if (orderNo == null) {
+        continue;
+      }
+      String normalized = orderNo.trim();
+      if (!normalized.isBlank()) {
+        out.add(normalized);
+      }
+    }
+    return out;
+  }
+
+  private static final class ReasonInfo {
+    final String reasonCode;
+    final String reasonDetail;
+    final String reasonSource;
+    final String blockingDimension;
+    final String dependencyStatus;
+    final Map<String, Object> evidence;
+
+    ReasonInfo(
+      String reasonCode,
+      String reasonDetail,
+      String reasonSource,
+      String blockingDimension,
+      String dependencyStatus,
+      Map<String, Object> evidence
+    ) {
+      this.reasonCode = reasonCode;
+      this.reasonDetail = reasonDetail;
+      this.reasonSource = reasonSource;
+      this.blockingDimension = blockingDimension;
+      this.dependencyStatus = dependencyStatus;
+      this.evidence = evidence;
+    }
+
+    static ReasonInfo capacity(
+      String reasonCode,
+      String reasonDetail,
+      String blockingDimension,
+      String processCode,
+      int availableValue,
+      int requiredValue,
+      double materialValue
+    ) {
+      Map<String, Object> evidence = new LinkedHashMap<>();
+      evidence.put("process_code", processCode);
+      evidence.put("available", availableValue);
+      evidence.put("required", requiredValue);
+      evidence.put("material_available", round3(materialValue));
+      return new ReasonInfo(reasonCode, reasonDetail, "ENGINE", blockingDimension, DEPENDENCY_READY, evidence);
     }
   }
 

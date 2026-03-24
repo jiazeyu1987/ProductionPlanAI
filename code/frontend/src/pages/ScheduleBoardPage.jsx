@@ -1,29 +1,344 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SimpleTable from "../components/SimpleTable";
 import { loadList, postLegacy } from "../services/api";
+
+const REASON_TEXT = {
+  NONE: "无（已排满）",
+  CAPACITY_MANPOWER: "人力不足",
+  CAPACITY_MACHINE: "设备不足",
+  CAPACITY_UNKNOWN: "综合产能不足",
+  MATERIAL_SHORTAGE: "物料不足",
+  DEPENDENCY_BLOCKED: "前序工序未释放",
+  FROZEN_BY_POLICY: "订单冻结策略",
+  LOCKED_PRESERVED: "锁单保留基线",
+  UNKNOWN: "未标记原因"
+};
+
+const DIMENSION_TEXT = {
+  NONE: "无",
+  CAPACITY: "人机产能",
+  MATERIAL: "物料",
+  DEPENDENCY: "工序依赖",
+  POLICY: "策略约束",
+  UNKNOWN: "未识别"
+};
+
+function toNumber(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatQty(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return "-";
+  }
+  if (Math.abs(n - Math.round(n)) < 1e-9) {
+    return String(Math.round(n));
+  }
+  return n.toFixed(2);
+}
+
+function formatPercent(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return "-";
+  }
+  if (Math.abs(n - Math.round(n)) < 1e-9) {
+    return `${Math.round(n)}%`;
+  }
+  return `${n.toFixed(2)}%`;
+}
+
+function normalizeVersionNo(row) {
+  return String(row?.version_no || row?.versionNo || "");
+}
+
+function normalizeReasonCode(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (!normalized) {
+    return "UNKNOWN";
+  }
+  if (normalized === "CAPACITY_LIMIT") {
+    return "CAPACITY_UNKNOWN";
+  }
+  if (normalized === "DEPENDENCY_LIMIT") {
+    return "DEPENDENCY_BLOCKED";
+  }
+  return normalized;
+}
+
+function reasonToText(code) {
+  const normalized = normalizeReasonCode(code);
+  return REASON_TEXT[normalized] || normalized;
+}
+
+function inferDimensionByReason(reasonCode) {
+  const normalized = normalizeReasonCode(reasonCode);
+  if (normalized.startsWith("CAPACITY_")) {
+    return "CAPACITY";
+  }
+  if (normalized === "MATERIAL_SHORTAGE") {
+    return "MATERIAL";
+  }
+  if (normalized === "DEPENDENCY_BLOCKED") {
+    return "DEPENDENCY";
+  }
+  if (normalized === "FROZEN_BY_POLICY" || normalized === "LOCKED_PRESERVED") {
+    return "POLICY";
+  }
+  return "UNKNOWN";
+}
+
+function dimensionToText(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  return DIMENSION_TEXT[normalized] || DIMENSION_TEXT.UNKNOWN;
+}
+
+function topCode(counter) {
+  const entries = Object.entries(counter || {});
+  if (entries.length === 0) {
+    return "";
+  }
+  entries.sort((a, b) => {
+    if (b[1] !== a[1]) {
+      return b[1] - a[1];
+    }
+    return String(a[0]).localeCompare(String(b[0]));
+  });
+  return entries[0][0];
+}
+
+function findReasonCode(row) {
+  const direct = normalizeReasonCode(
+    row?.reason_code || row?.reasonCode || row?.last_block_reason || row?.lastBlockReason || ""
+  );
+  if (direct !== "UNKNOWN") {
+    return direct;
+  }
+  if (Array.isArray(row?.reasons) && row.reasons.length > 0) {
+    return normalizeReasonCode(row.reasons[0]);
+  }
+  return "UNKNOWN";
+}
+
+function buildOrderAllocationRows(schedule, orderItems, taskItems = []) {
+  const allocations = Array.isArray(schedule?.allocations) ? schedule.allocations : [];
+  const unscheduled = Array.isArray(schedule?.unscheduled) ? schedule.unscheduled : [];
+  const orderMetaByNo = new Map();
+  for (const item of orderItems || []) {
+    const key = String(item?.order_no || item?.production_order_no || "").trim();
+    if (!key) {
+      continue;
+    }
+    orderMetaByNo.set(key, item);
+  }
+  for (const task of taskItems || []) {
+    const orderNo = String(task?.order_no || "").trim();
+    if (!orderNo || orderMetaByNo.has(orderNo)) {
+      continue;
+    }
+    orderMetaByNo.set(orderNo, {
+      order_no: orderNo,
+      urgent_flag: Number(task?.priority) === 1 ? 1 : 0,
+      lock_flag: Number(task?.lock_flag) === 1 ? 1 : 0
+    });
+  }
+  const map = new Map();
+
+  function ensure(orderNo) {
+    if (!map.has(orderNo)) {
+      map.set(orderNo, {
+        id: orderNo,
+        order_no: orderNo,
+        scheduled_qty: 0,
+        unscheduled_qty: 0,
+        workers_used: 0,
+        machines_used: 0,
+        resource_units: 0,
+        allocation_count: 0,
+        unscheduled_task_count: 0,
+        reason_counter: {},
+        dimension_counter: {}
+      });
+    }
+    return map.get(orderNo);
+  }
+
+  for (const row of allocations) {
+    const orderNo = String(row?.orderNo || row?.order_no || "").trim();
+    if (!orderNo) {
+      continue;
+    }
+    const item = ensure(orderNo);
+    const scheduledQty = toNumber(row?.scheduledQty ?? row?.scheduled_qty);
+    const workers = Math.max(0, toNumber(row?.workersUsed ?? row?.workers_used));
+    const machines = Math.max(0, toNumber(row?.machinesUsed ?? row?.machines_used));
+    item.scheduled_qty += scheduledQty;
+    item.workers_used += workers;
+    item.machines_used += machines;
+    item.resource_units += workers + machines;
+    item.allocation_count += 1;
+  }
+
+  for (const row of unscheduled) {
+    const orderNo = String(row?.orderNo || row?.order_no || "").trim();
+    if (!orderNo) {
+      continue;
+    }
+    const item = ensure(orderNo);
+    const remaining = Math.max(0, toNumber(row?.remainingQty ?? row?.remaining_qty));
+    const reasonCode = findReasonCode(row);
+    const blockingDimension = String(
+      row?.blocking_dimension || row?.blockingDimension || inferDimensionByReason(reasonCode)
+    ).toUpperCase();
+    item.unscheduled_qty += remaining;
+    item.unscheduled_task_count += 1;
+    item.reason_counter[reasonCode] = (item.reason_counter[reasonCode] || 0) + 1;
+    item.dimension_counter[blockingDimension] = (item.dimension_counter[blockingDimension] || 0) + 1;
+  }
+
+  const rows = [...map.values()];
+  const totalResourceUnits = rows.reduce((sum, item) => sum + item.resource_units, 0);
+  const totalScheduledQty = rows.reduce((sum, item) => sum + item.scheduled_qty, 0);
+
+  return rows
+    .map((item) => {
+      const hasUnscheduled = item.unscheduled_qty > 1e-9;
+      const topReasonCode = hasUnscheduled ? topCode(item.reason_counter) || "UNKNOWN" : "NONE";
+      const topDimension = hasUnscheduled ? topCode(item.dimension_counter) || "UNKNOWN" : "NONE";
+      const meta = orderMetaByNo.get(item.order_no);
+      const priorityLabel = Number(meta?.urgent_flag) === 1 ? "加急订单" : "常规订单";
+      const lockLabel = Number(meta?.lock_flag) === 1 ? "是" : "否";
+      const dueDate = meta?.promised_due_date || meta?.expected_due_date || "-";
+      const resourceShareRaw =
+        totalResourceUnits > 1e-9
+          ? (item.resource_units / totalResourceUnits) * 100
+          : (totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0);
+      const qtyShareRaw = totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0;
+
+      let explain = `按“加急优先、交期优先、订单号稳定排序”规则，${priorityLabel}（交期 ${dueDate}）获得了当前草稿资源分配。`;
+      if (item.scheduled_qty <= 1e-9 && item.unscheduled_qty > 1e-9) {
+        explain += ` 当前未分配到可执行资源，主要瓶颈是“${reasonToText(topReasonCode)}（${dimensionToText(topDimension)}）”。`;
+      } else if (item.unscheduled_qty > 1e-9) {
+        explain +=
+          ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}；` +
+          `仍有 ${formatQty(item.unscheduled_qty)} 未排，主要瓶颈是“${reasonToText(topReasonCode)}（${dimensionToText(topDimension)}）”。`;
+      } else {
+        explain +=
+          ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}，` +
+          "当前没有未排任务。";
+      }
+
+      return {
+        ...item,
+        priority_label: priorityLabel,
+        lock_label: lockLabel,
+        due_date: dueDate,
+        resource_share: resourceShareRaw,
+        qty_share: qtyShareRaw,
+        bottleneck_reason_code: topReasonCode,
+        bottleneck_reason_text: reasonToText(topReasonCode),
+        bottleneck_dimension: topDimension,
+        bottleneck_dimension_text: dimensionToText(topDimension),
+        explain_cn: explain
+      };
+    })
+    .sort((a, b) => {
+      const byResource = b.resource_share - a.resource_share;
+      if (Math.abs(byResource) > 1e-9) {
+        return byResource;
+      }
+      const byScheduled = b.scheduled_qty - a.scheduled_qty;
+      if (Math.abs(byScheduled) > 1e-9) {
+        return byScheduled;
+      }
+      return String(a.order_no).localeCompare(String(b.order_no), "zh-Hans-CN");
+    });
+}
 
 export default function ScheduleBoardPage() {
   const [versions, setVersions] = useState([]);
   const [selected, setSelected] = useState("");
   const [tasks, setTasks] = useState([]);
+  const [orderAllocationRows, setOrderAllocationRows] = useState([]);
+  const [algorithmDetail, setAlgorithmDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const detailRequestSeqRef = useRef(0);
+
+  const boardSummary = useMemo(() => {
+    if (!orderAllocationRows.length) {
+      return null;
+    }
+    const totalScheduledQty = orderAllocationRows.reduce((sum, row) => sum + toNumber(row.scheduled_qty), 0);
+    const totalUnscheduledQty = orderAllocationRows.reduce((sum, row) => sum + toNumber(row.unscheduled_qty), 0);
+    const reasonCounter = {};
+    for (const row of orderAllocationRows) {
+      const key = row.bottleneck_reason_code || "UNKNOWN";
+      if (toNumber(row.unscheduled_qty) <= 1e-9) {
+        continue;
+      }
+      reasonCounter[key] = (reasonCounter[key] || 0) + 1;
+    }
+    const topReasonCode = totalUnscheduledQty > 1e-9 ? topCode(reasonCounter) || "UNKNOWN" : "NONE";
+    return {
+      orderCount: orderAllocationRows.length,
+      totalScheduledQty,
+      totalUnscheduledQty,
+      topReasonCode
+    };
+  }, [orderAllocationRows]);
 
   async function loadVersions() {
     const data = await loadList("/internal/v1/internal/schedule-versions");
-    setVersions(data.items);
-    if (!selected && data.items.length > 0) {
-      setSelected(data.items[data.items.length - 1].version_no);
+    const items = data.items ?? [];
+    setVersions(items);
+    if (items.length === 0) {
+      setSelected("");
+      return;
+    }
+    const exists = items.some((item) => normalizeVersionNo(item) === selected);
+    if (!selected || !exists) {
+      setSelected(normalizeVersionNo(items[items.length - 1]));
     }
   }
 
-  async function loadTasks(versionNo) {
+  async function loadVersionDetail(versionNo) {
+    const requestSeq = detailRequestSeqRef.current + 1;
+    detailRequestSeqRef.current = requestSeq;
     if (!versionNo) {
       setTasks([]);
+      setAlgorithmDetail(null);
+      setOrderAllocationRows([]);
+      setDetailLoading(false);
       return;
     }
-    const data = await loadList(`/internal/v1/internal/schedule-versions/${versionNo}/tasks`);
-    setTasks(data.items);
+    setDetailLoading(true);
+    setTasks([]);
+    setAlgorithmDetail(null);
+    setOrderAllocationRows([]);
+    try {
+      const [tasksRes, algorithmRes, schedulesRes, orderPoolRes] = await Promise.all([
+        loadList(`/internal/v1/internal/schedule-versions/${versionNo}/tasks`),
+        loadList(`/internal/v1/internal/schedule-versions/${versionNo}/algorithm`),
+        loadList("/api/schedules"),
+        loadList("/internal/v1/internal/order-pool")
+      ]);
+      if (requestSeq !== detailRequestSeqRef.current) {
+        return;
+      }
+      setTasks(tasksRes.items ?? []);
+      setAlgorithmDetail(algorithmRes);
+      const scheduleItems = schedulesRes.items ?? [];
+      const selectedSchedule = scheduleItems.find((item) => normalizeVersionNo(item) === versionNo);
+      setOrderAllocationRows(buildOrderAllocationRows(selectedSchedule, orderPoolRes.items ?? [], tasksRes.items ?? []));
+    } finally {
+      if (requestSeq === detailRequestSeqRef.current) {
+        setDetailLoading(false);
+      }
+    }
   }
 
   async function generate() {
@@ -32,8 +347,12 @@ export default function ScheduleBoardPage() {
       base_version_no: selected || null,
       autoReplan: false
     });
-    setMessage(`生成完成：${schedule.version_no || schedule.versionNo}`);
+    const versionNo = String(schedule.version_no || schedule.versionNo || "");
+    setMessage(`生成完成：${versionNo || "-"}`);
     await loadVersions();
+    if (versionNo) {
+      setSelected(versionNo);
+    }
   }
 
   useEffect(() => {
@@ -41,7 +360,7 @@ export default function ScheduleBoardPage() {
   }, []);
 
   useEffect(() => {
-    loadTasks(selected).catch(() => {});
+    loadVersionDetail(selected).catch(() => {});
   }, [selected]);
 
   return (
@@ -52,54 +371,129 @@ export default function ScheduleBoardPage() {
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
           <option value="">请选择版本</option>
           {versions.map((item) => (
-            <option key={item.version_no} value={item.version_no}>
-              {item.version_no} / {item.status_name_cn || item.status || "-"}
+            <option key={normalizeVersionNo(item)} value={normalizeVersionNo(item)}>
+              {normalizeVersionNo(item)} / {item.status_name_cn || item.status || "-"}
             </option>
           ))}
         </select>
       </div>
+
       {message ? <p className="notice">{message}</p> : null}
-      <p className="hint">批量调整前影响预览：受影响任务 {tasks.length} 条。</p>
-      <SimpleTable
-        columns={[
-          {
-            key: "order_no",
-            title: "订单",
-            render: (value) =>
-              value ? (
-                <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
-                  {value}
-                </Link>
-              ) : (
-                "-"
-              )
-          },
-          {
-            key: "process_code",
-            title: "工序",
-            render: (value, row) => {
-              const processCode = value || "";
-              const processName = row.process_name_cn || processCode || "-";
-              if (!processCode) {
-                return processName;
-              }
-              return (
-                <Link className="table-link" to={`/masterdata?process_code=${encodeURIComponent(processCode)}`}>
-                  {processName}
-                </Link>
-              );
+      <p className="hint">
+        订单列展示的是生产订单号。一个订单会被拆成多行任务（不同工序/日期/班次），所以会重复出现，这是正常现象。
+      </p>
+      <p className="hint">
+        下面“资源占比”按当前草稿中的人力+设备用量估算；如果该单没有资源用量数据，回退为计划量占比。
+      </p>
+
+      {boardSummary ? (
+        <div className="card-grid">
+          <article className="metric-card">
+            <span>参与分配订单</span>
+            <strong>{boardSummary.orderCount}</strong>
+          </article>
+          <article className="metric-card">
+            <span>已分配总量</span>
+            <strong>{formatQty(boardSummary.totalScheduledQty)}</strong>
+          </article>
+          <article className="metric-card">
+            <span>未排总量</span>
+            <strong>{formatQty(boardSummary.totalUnscheduledQty)}</strong>
+          </article>
+          <article className="metric-card">
+            <span>首要瓶颈</span>
+            <strong>{reasonToText(boardSummary.topReasonCode)}</strong>
+          </article>
+        </div>
+      ) : null}
+
+      <div className="panel">
+        <h3>当前草稿怎么分配（按订单）</h3>
+        {detailLoading ? <p className="hint">正在切换草稿并刷新分配解释...</p> : null}
+        {algorithmDetail ? (
+          <p className="hint">
+            版本 {algorithmDetail.version_no || selected || "-"}：任务{" "}
+            {formatQty(algorithmDetail?.summary?.task_count)} 个，已排{" "}
+            {formatQty(algorithmDetail?.summary?.scheduled_qty)}，完成率{" "}
+            {formatPercent(algorithmDetail?.summary?.schedule_completion_rate)}。
+          </p>
+        ) : null}
+        <SimpleTable
+          columns={[
+            {
+              key: "order_no",
+              title: "订单",
+              render: (value) =>
+                value ? (
+                  <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
+                    {value}
+                  </Link>
+                ) : (
+                  "-"
+                )
+            },
+            { key: "priority_label", title: "优先级" },
+            { key: "lock_label", title: "是否锁单" },
+            { key: "scheduled_qty", title: "已分配量", render: (value) => formatQty(value) },
+            { key: "resource_share", title: "资源占比", render: (value) => formatPercent(value) },
+            { key: "qty_share", title: "计划量占比", render: (value) => formatPercent(value) },
+            { key: "unscheduled_qty", title: "未排量", render: (value) => formatQty(value) },
+            { key: "bottleneck_reason_text", title: "主要瓶颈" },
+            { key: "bottleneck_dimension_text", title: "瓶颈维度" },
+            {
+              key: "explain_cn",
+              title: "为什么这么分配",
+              render: (value) => <span className="cell-wrap">{value || "-"}</span>
             }
-          },
-          { key: "calendar_date", title: "日期" },
-          {
-            key: "shift_code",
-            title: "班次",
-            render: (value, row) => row.shift_name_cn || value || "-"
-          },
-          { key: "plan_qty", title: "计划量" }
-        ]}
-        rows={tasks}
-      />
+          ]}
+          rows={orderAllocationRows}
+        />
+      </div>
+
+      <div className="panel">
+        <h3>任务明细（按工序/班次）</h3>
+        <p className="hint">受影响任务：{tasks.length} 条。</p>
+        <SimpleTable
+          columns={[
+            {
+              key: "order_no",
+              title: "订单",
+              render: (value) =>
+                value ? (
+                  <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
+                    {value}
+                  </Link>
+                ) : (
+                  "-"
+                )
+            },
+            {
+              key: "process_code",
+              title: "工序",
+              render: (value, row) => {
+                const processCode = value || "";
+                const processName = row.process_name_cn || processCode || "-";
+                if (!processCode) {
+                  return processName;
+                }
+                return (
+                  <Link className="table-link" to={`/masterdata?process_code=${encodeURIComponent(processCode)}`}>
+                    {processName}
+                  </Link>
+                );
+              }
+            },
+            { key: "calendar_date", title: "日期" },
+            {
+              key: "shift_code",
+              title: "班次",
+              render: (value, row) => row.shift_name_cn || value || "-"
+            },
+            { key: "plan_qty", title: "计划量", render: (value) => formatQty(value) }
+          ]}
+          rows={tasks}
+        />
+      </div>
     </section>
   );
 }

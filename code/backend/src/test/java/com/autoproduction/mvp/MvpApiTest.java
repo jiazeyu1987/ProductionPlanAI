@@ -117,6 +117,13 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.version_no").value("V001"))
       .andExpect(jsonPath("$.summary.task_count").isNumber())
+      .andExpect(jsonPath("$.summary.schedule_generate_duration_ms").isNumber())
+      .andExpect(jsonPath("$.summary.schedule_generate_phase_duration_ms").isMap())
+      .andExpect(jsonPath("$.summary.unscheduled_reason_distribution").isMap())
+      .andExpect(jsonPath("$.summary.locked_or_frozen_impact_count").isNumber())
+      .andExpect(jsonPath("$.summary.publish_rollback_count").isNumber())
+      .andExpect(jsonPath("$.summary.replan_failure_rate").isNumber())
+      .andExpect(jsonPath("$.summary.api_error_rate").isNumber())
       .andExpect(jsonPath("$.logic").isArray())
       .andExpect(jsonPath("$.process_summary").isArray())
       .andExpect(jsonPath("$.process_summary[0].max_allocation_qty").isNumber())
@@ -128,6 +135,66 @@ class MvpApiTest {
       .andExpect(jsonPath("$.process_summary[0].unscheduled_qty").isNumber())
       .andExpect(jsonPath("$.process_summary[0].schedule_rate").isNumber())
       .andExpect(jsonPath("$.unscheduled_reason_summary").isArray());
+  }
+
+  @Test
+  void scheduleTasksEndpointExposesDependencyAndBlockReasonFields() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-task-fields-generate")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    MvcResult tasksResult = mockMvc.perform(
+        get("/internal/v1/internal/schedule-versions/V001/tasks")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+
+    Map<String, Object> tasksBody = objectMapper.readValue(tasksResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> items = (List<Map<String, Object>>) tasksBody.get("items");
+    assertTrue(!items.isEmpty(), "schedule tasks should not be empty");
+    assertTrue(items.stream().allMatch(row -> row.containsKey("dependency_status")));
+    assertTrue(items.stream().allMatch(row -> row.containsKey("last_block_reason")));
+    assertTrue(items.stream().allMatch(row -> row.containsKey("task_status")));
+  }
+
+  @Test
+  void scheduleDetailUnscheduledContainsStructuredReasonFields() throws Exception {
+    mockMvc.perform(
+        patch("/api/orders/MO-STENT-001")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-unscheduled-structured-patch",
+            "frozen_flag", 1
+          )))
+      )
+      .andExpect(status().isOk());
+
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-unscheduled-structured-generate")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    MvcResult latestResult = mockMvc.perform(get("/api/schedules/latest"))
+      .andExpect(status().isOk())
+      .andReturn();
+
+    Map<String, Object> body = objectMapper.readValue(latestResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> unscheduled = (List<Map<String, Object>>) body.get("unscheduled");
+    assertTrue(!unscheduled.isEmpty(), "unscheduled list should not be empty");
+    assertTrue(unscheduled.stream().allMatch(row -> row.containsKey("reason_code")));
+    assertTrue(unscheduled.stream().allMatch(row -> row.containsKey("dependency_status")));
+    assertTrue(unscheduled.stream().allMatch(row -> row.containsKey("task_status")));
+    assertTrue(unscheduled.stream().allMatch(row -> row.containsKey("last_block_reason")));
+    assertTrue(unscheduled.stream().allMatch(row -> row.containsKey("reasons")));
+    assertTrue(unscheduled.stream().noneMatch(row -> "CAPACITY_LIMIT".equals(String.valueOf(row.get("reason_code")))));
   }
 
   @Test
@@ -167,6 +234,163 @@ class MvpApiTest {
     mockMvc.perform(get("/api/orders"))
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[0].lock_flag").value(1));
+  }
+
+  @Test
+  void dispatchApprovalCanCancelPriority() throws Exception {
+    MvcResult createPriorityResult = mockMvc.perform(
+        post("/internal/v1/internal/dispatch-commands")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-priority-create",
+            "command_type", "PRIORITY",
+            "target_order_no", "MO-BALLOON-001",
+            "target_order_type", "production",
+            "effective_time", "2026-03-22T08:10:00Z",
+            "reason", "test priority",
+            "created_by", "dispatcher01"
+          )))
+      )
+      .andExpect(status().isAccepted())
+      .andReturn();
+    String priorityCommandId = String.valueOf(
+      objectMapper.readValue(createPriorityResult.getResponse().getContentAsString(), Map.class).get("command_id")
+    );
+
+    mockMvc.perform(
+        post("/internal/v1/internal/dispatch-commands/" + priorityCommandId + "/approvals")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-priority-approve",
+            "approver", "manager01",
+            "decision", "APPROVED",
+            "decision_reason", "ok",
+            "decision_time", "2026-03-22T08:11:00Z"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.success").value(true));
+
+    MvcResult ordersAfterPriority = mockMvc.perform(get("/api/orders"))
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> ordersAfterPriorityBody = objectMapper.readValue(
+      ordersAfterPriority.getResponse().getContentAsString(),
+      Map.class
+    );
+    List<Map<String, Object>> ordersAfterPriorityItems = (List<Map<String, Object>>) ordersAfterPriorityBody.get("items");
+    Map<String, Object> balloonAfterPriority = ordersAfterPriorityItems.stream()
+      .filter(item -> "MO-BALLOON-001".equals(String.valueOf(item.get("order_no"))))
+      .findFirst()
+      .orElseThrow();
+    assertEquals(1, ((Number) balloonAfterPriority.get("urgent_flag")).intValue());
+
+    MvcResult createUnpriorityResult = mockMvc.perform(
+        post("/internal/v1/internal/dispatch-commands")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-unpriority-create",
+            "command_type", "UNPRIORITY",
+            "target_order_no", "MO-BALLOON-001",
+            "target_order_type", "production",
+            "effective_time", "2026-03-22T08:12:00Z",
+            "reason", "test unpriority",
+            "created_by", "dispatcher01"
+          )))
+      )
+      .andExpect(status().isAccepted())
+      .andReturn();
+    String unpriorityCommandId = String.valueOf(
+      objectMapper.readValue(createUnpriorityResult.getResponse().getContentAsString(), Map.class).get("command_id")
+    );
+
+    mockMvc.perform(
+        post("/internal/v1/internal/dispatch-commands/" + unpriorityCommandId + "/approvals")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-unpriority-approve",
+            "approver", "manager01",
+            "decision", "APPROVED",
+            "decision_reason", "ok",
+            "decision_time", "2026-03-22T08:13:00Z"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.success").value(true));
+
+    MvcResult ordersAfterUnpriority = mockMvc.perform(get("/api/orders"))
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> ordersAfterUnpriorityBody = objectMapper.readValue(
+      ordersAfterUnpriority.getResponse().getContentAsString(),
+      Map.class
+    );
+    List<Map<String, Object>> ordersAfterUnpriorityItems = (List<Map<String, Object>>) ordersAfterUnpriorityBody.get("items");
+    Map<String, Object> balloonAfterUnpriority = ordersAfterUnpriorityItems.stream()
+      .filter(item -> "MO-BALLOON-001".equals(String.valueOf(item.get("order_no"))))
+      .findFirst()
+      .orElseThrow();
+    assertEquals(0, ((Number) balloonAfterUnpriority.get("urgent_flag")).intValue());
+  }
+
+  @Test
+  void lockedOrderWithoutBaseVersionShouldExposeLockedPreservedReason() throws Exception {
+    mockMvc.perform(
+        patch("/api/orders/MO-CATH-001")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-lock-patch",
+            "lock_flag", 1
+          )))
+      )
+      .andExpect(status().isOk());
+
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-lock-generate")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(
+        get("/internal/v1/internal/schedule-versions/V001/algorithm")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.unscheduled_reason_summary[?(@.reason_code=='LOCKED_PRESERVED')].count").isNotEmpty());
+  }
+
+  @Test
+  void frozenOrderShouldExposeFrozenPolicyReason() throws Exception {
+    mockMvc.perform(
+        patch("/api/orders/MO-STENT-001")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-frozen-patch",
+            "frozen_flag", 1
+          )))
+      )
+      .andExpect(status().isOk());
+
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-frozen-generate")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(
+        get("/internal/v1/internal/schedule-versions/V001/algorithm")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.unscheduled_reason_summary[?(@.reason_code=='FROZEN_BY_POLICY')].count").isNotEmpty());
   }
 
   @Test
@@ -236,6 +460,7 @@ class MvpApiTest {
       )
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.total").value(9))
+      .andExpect(jsonPath("$.items[0].lock_flag").isNumber())
       .andExpect(jsonPath("$.items[0].completed_qty").isNumber())
       .andExpect(jsonPath("$.items[0].remaining_qty").isNumber())
       .andExpect(jsonPath("$.items[0].progress_rate").isNumber());
@@ -312,6 +537,10 @@ class MvpApiTest {
       .andExpect(jsonPath("$.days").value(1))
       .andExpect(jsonPath("$.generated_versions").value(1))
       .andExpect(jsonPath("$.reporting_count").isNumber())
+      .andExpect(jsonPath("$.manual_advance_duration_ms").isNumber())
+      .andExpect(jsonPath("$.manual_advance_phase_duration_ms").isMap())
+      .andExpect(jsonPath("$.schedule_generate_duration_ms").isNumber())
+      .andExpect(jsonPath("$.unscheduled_reason_distribution").isMap())
       .andExpect(jsonPath("$.state.latest_version_no").isNotEmpty());
 
     mockMvc.perform(
@@ -395,7 +624,8 @@ class MvpApiTest {
           .header("Authorization", "Bearer test")
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.items[0].action_name_cn").isNotEmpty());
+      .andExpect(jsonPath("$.items[0].action_name_cn").isNotEmpty())
+      .andExpect(jsonPath("$.items[0].perf_context.phase").value("schedule_generate"));
 
     mockMvc.perform(
         get("/internal/v1/internal/simulation/state")

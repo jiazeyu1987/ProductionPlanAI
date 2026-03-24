@@ -314,6 +314,13 @@ th {
   text-overflow: ellipsis;
 }
 
+.cell-wrap {
+  display: block;
+  min-width: 320px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
 .guide-list {
   margin: 0;
   padding-left: 20px;

@@ -29,6 +29,22 @@ function isInProgressStatus(status) {
   return String(status || "").toUpperCase() === "IN_PROGRESS";
 }
 
+function commandLabel(commandType) {
+  if (commandType === "LOCK") {
+    return "锁单";
+  }
+  if (commandType === "UNLOCK") {
+    return "解锁";
+  }
+  if (commandType === "PRIORITY") {
+    return "提优先级";
+  }
+  if (commandType === "UNPRIORITY") {
+    return "解除优先级";
+  }
+  return commandType;
+}
+
 function formatPercent(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) {
@@ -75,6 +91,7 @@ export default function OrdersPoolPage() {
   const [scheduledOrderNos, setScheduledOrderNos] = useState([]);
   const [reportings, setReportings] = useState([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const orderNoFilter = (searchParams.get("order_no") || "").trim();
@@ -102,9 +119,10 @@ export default function OrdersPoolPage() {
 
   async function createCommand(orderNo, commandType) {
     setError("");
+    setNotice("");
     setSubmitting(true);
     try {
-      await postContract("/internal/v1/internal/dispatch-commands", {
+      const created = await postContract("/internal/v1/internal/dispatch-commands", {
         command_type: commandType,
         target_order_no: orderNo,
         target_order_type: "production",
@@ -112,6 +130,17 @@ export default function OrdersPoolPage() {
         reason: `快速操作：${commandType}`,
         created_by: "dispatcher01"
       });
+      const commandId = String(created?.command_id || "").trim();
+      if (!commandId) {
+        throw new Error("创建调度指令失败：缺少指令编号。");
+      }
+      await postContract(`/internal/v1/internal/dispatch-commands/${commandId}/approvals`, {
+        approver: "dispatcher01",
+        decision: "APPROVED",
+        decision_reason: `快速操作自动审批：${commandType}`,
+        decision_time: new Date().toISOString()
+      });
+      setNotice(`已执行${commandLabel(commandType)}：${orderNo}`);
       await refresh();
     } catch (e) {
       setError(e.message);
@@ -195,6 +224,7 @@ export default function OrdersPoolPage() {
       </div>
       {orderNoFilter ? <p className="hint">当前按生产订单定位：{orderNoFilter}</p> : null}
       {error ? <p className="error">{error}</p> : null}
+      {notice ? <p className="notice">{notice}</p> : null}
 
       {selectedOrder ? (
         <div className="panel">
@@ -289,8 +319,9 @@ export default function OrdersPoolPage() {
           },
           { key: "order_qty", title: "数量" },
           { key: "promised_due_date", title: "承诺交期" },
-          { key: "urgent_flag", title: "加急" },
-          { key: "frozen_flag", title: "冻结" },
+          { key: "urgent_flag", title: "加急", render: (value) => (Number(value) === 1 ? "是" : "否") },
+          { key: "lock_flag", title: "锁单", render: (value) => (Number(value) === 1 ? "是" : "否") },
+          { key: "frozen_flag", title: "冻结", render: (value) => (Number(value) === 1 ? "是" : "否") },
           {
             key: "status",
             title: "状态",
@@ -306,16 +337,21 @@ export default function OrdersPoolPage() {
             title: "操作",
             render: (_, row) => {
               const isFrozen = Number(row.frozen_flag) === 1;
+              const isLocked = Number(row.lock_flag) === 1;
+              const isUrgent = Number(row.urgent_flag) === 1;
               return (
                 <div className="row-actions">
-                  <button disabled={submitting || isFrozen} onClick={() => createCommand(row.order_no, "LOCK")}>
+                  <button disabled={submitting || isFrozen || isLocked} onClick={() => createCommand(row.order_no, "LOCK")}>
                     锁单
                   </button>
-                  <button disabled={submitting || !isFrozen} onClick={() => createCommand(row.order_no, "UNLOCK")}>
+                  <button disabled={submitting || isFrozen || !isLocked} onClick={() => createCommand(row.order_no, "UNLOCK")}>
                     解锁
                   </button>
-                  <button disabled={submitting} onClick={() => createCommand(row.order_no, "PRIORITY")}>
+                  <button disabled={submitting || isFrozen || isUrgent} onClick={() => createCommand(row.order_no, "PRIORITY")}>
                     提优先级
+                  </button>
+                  <button disabled={submitting || isFrozen || !isUrgent} onClick={() => createCommand(row.order_no, "UNPRIORITY")}>
+                    解除优先级
                   </button>
                 </div>
               );

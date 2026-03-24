@@ -359,35 +359,82 @@ public class MvpStoreService {
 
   public Map<String, Object> generateSchedule(Map<String, Object> options, String requestId, String operator) {
     synchronized (lock) {
+      long totalStart = System.nanoTime();
+      Map<String, Long> phaseDurationMs = new LinkedHashMap<>();
+
+      long phaseStart = System.nanoTime();
       syncCompletedQtyFromFinalProcessReports();
+      phaseDurationMs.put("sync_completed_qty", elapsedMillis(phaseStart));
+
+      phaseStart = System.nanoTime();
       boolean autoReplan = bool(options, "autoReplan", false);
-      List<String> excludedLockedOrders = new ArrayList<>();
+      String baseVersionNo = string(options, "base_version_no", null);
+      MvpDomain.ScheduleVersion baseVersion = null;
+      if (baseVersionNo != null && !baseVersionNo.isBlank()) {
+        baseVersion = state.schedules.stream().filter(item -> item.versionNo.equals(baseVersionNo)).findFirst().orElse(null);
+      }
+
+      List<String> lockedOrders = new ArrayList<>();
       List<MvpDomain.Order> orders = new ArrayList<>();
       for (MvpDomain.Order order : state.orders) {
-        if (autoReplan && order.lockFlag) {
-          excludedLockedOrders.add(order.orderNo);
-          continue;
+        if (order.lockFlag) {
+          lockedOrders.add(order.orderNo);
         }
         orders.add(order);
       }
+      phaseDurationMs.put("prepare_input", elapsedMillis(phaseStart));
+
+      phaseStart = System.nanoTime();
       String versionNo = "V%03d".formatted(state.schedules.size() + 1);
-      MvpDomain.ScheduleVersion schedule = SchedulerEngine.generate(state, orders, requestId, versionNo);
+      MvpDomain.ScheduleVersion schedule = SchedulerEngine.generate(
+        state,
+        orders,
+        requestId,
+        versionNo,
+        baseVersion,
+        new HashSet<>(lockedOrders)
+      );
+      phaseDurationMs.put("engine_generate", elapsedMillis(phaseStart));
+
+      phaseStart = System.nanoTime();
       schedule.status = "DRAFT";
-      schedule.basedOnVersion = string(options, "base_version_no", null);
+      schedule.basedOnVersion = baseVersionNo;
       schedule.ruleVersionNo = "RULE-P0-BASE";
       schedule.publishTime = null;
       schedule.createdBy = operator;
       schedule.createdAt = OffsetDateTime.now(ZoneOffset.UTC);
       schedule.metadata.put("autoReplan", autoReplan);
-      schedule.metadata.put("excludedLockedOrders", excludedLockedOrders);
+      schedule.metadata.put("excludedLockedOrders", List.of());
+      schedule.metadata.put("preservedLockedOrders", lockedOrders);
+      schedule.metadata.put("baseVersionResolved", baseVersion != null);
+      schedule.metadata.put("schedule_generate_phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
+
+      long candidateOrderCount = orders.stream().map(order -> order.orderNo).filter(Objects::nonNull).distinct().count();
+      long candidateTaskCount = schedule.tasks.size();
+      schedule.metrics.putAll(buildScheduleObservabilityMetrics(schedule, candidateOrderCount, candidateTaskCount));
+
       state.schedules.add(schedule);
+      phaseDurationMs.put("persist_and_metrics", elapsedMillis(phaseStart));
+
+      long totalDurationMs = elapsedMillis(totalStart);
+      schedule.metrics.put("schedule_generate_duration_ms", totalDurationMs);
+      schedule.metrics.put("schedule_generate_phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
+      schedule.metadata.put("schedule_generate_duration_ms", totalDurationMs);
+
+      Map<String, Object> perfContext = new LinkedHashMap<>();
+      perfContext.put("request_id", requestId);
+      perfContext.put("version_no", schedule.versionNo);
+      perfContext.put("phase", "schedule_generate");
+      perfContext.put("duration_ms", totalDurationMs);
+      perfContext.put("phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
       appendAudit(
         "SCHEDULE_VERSION",
         schedule.versionNo,
         autoReplan ? "AUTO_REPLAN_SCHEDULE" : "GENERATE_SCHEDULE",
         operator,
         requestId,
-        string(options, "reason", null)
+        string(options, "reason", null),
+        perfContext
       );
       return toScheduleMap(schedule);
     }
@@ -997,6 +1044,9 @@ public class MvpStoreService {
     synchronized (lock) {
       return runIdempotent(requestId, "MANUAL_SIM_ADVANCE_DAY", () -> {
         ensureManualSimulationSnapshot();
+        long totalStart = System.nanoTime();
+        Map<String, Long> phaseDurationMs = new LinkedHashMap<>();
+        long phaseStart = System.nanoTime();
 
         String scenario = normalizeScenario(string(payload, "scenario", simulationState.scenario));
         long seed = payload != null && payload.containsKey("seed")
@@ -1010,11 +1060,14 @@ public class MvpStoreService {
         simulationState.seed = seed;
         simulationState.scenario = scenario;
         simulationState.dailySalesOrderCount = dailySales;
+        phaseDurationMs.put("prepare_input", elapsedMillis(phaseStart));
 
         LocalDate businessDate = simulationState.currentDate;
         Random dayRandom = new Random(seed + businessDate.toEpochDay() * 997L + 17L);
+        phaseStart = System.nanoTime();
         Map<String, Object> capacity = rebuildPlanningHorizon(businessDate, scenario, dayRandom, requestId + ":manual:capacity");
         double capacityFactor = number(capacity, "capacity_factor", 1d);
+        phaseDurationMs.put("rebuild_planning_horizon", elapsedMillis(phaseStart));
 
         String baseVersionNo = state.schedules.isEmpty() ? null : state.schedules.get(state.schedules.size() - 1).versionNo;
         Map<String, Object> generatePayload = new LinkedHashMap<>();
@@ -1022,15 +1075,20 @@ public class MvpStoreService {
         generatePayload.put("autoReplan", false);
         generatePayload.put("reason", "MANUAL_SIM_ADVANCE");
         generatePayload.put("request_id", requestId + ":manual:generate");
+        phaseStart = System.nanoTime();
         Map<String, Object> schedule = generateSchedule(generatePayload, requestId + ":manual:generate", "simulator");
         String versionNo = string(schedule, "version_no", string(schedule, "versionNo", null));
+        phaseDurationMs.put("generate_schedule", elapsedMillis(phaseStart));
 
         Map<String, Object> publishPayload = new LinkedHashMap<>();
         publishPayload.put("request_id", requestId + ":manual:publish");
         publishPayload.put("operator", "simulator");
         publishPayload.put("reason", "MANUAL_SIM_ADVANCE");
+        phaseStart = System.nanoTime();
         publishSchedule(versionNo, publishPayload, requestId + ":manual:publish", "simulator");
+        phaseDurationMs.put("publish_schedule", elapsedMillis(phaseStart));
 
+        phaseStart = System.nanoTime();
         int reportingCount = simulateDailyReporting(
           businessDate,
           versionNo,
@@ -1038,9 +1096,16 @@ public class MvpStoreService {
           dayRandom,
           requestId + ":manual:report"
         );
+        phaseDurationMs.put("simulate_reporting", elapsedMillis(phaseStart));
+
+        phaseStart = System.nanoTime();
         refreshOrderStatuses(businessDate.plusDays(1));
         int delayedOrders = countDelayedOrders(businessDate.plusDays(1));
         simulationState.currentDate = businessDate.plusDays(1);
+        phaseDurationMs.put("refresh_order_status", elapsedMillis(phaseStart));
+        MvpDomain.ScheduleVersion generatedSchedule = getScheduleEntity(versionNo);
+        Map<String, Object> generatedObservability = buildScheduleObservabilityMetrics(generatedSchedule, null, null);
+        long manualAdvanceDurationMs = elapsedMillis(totalStart);
 
         Map<String, Object> dailySummary = new LinkedHashMap<>();
         dailySummary.put("date", businessDate.toString());
@@ -1066,6 +1131,35 @@ public class MvpStoreService {
         summary.put("delayed_orders", delayedOrders);
         summary.put("avg_capacity_factor", round2(capacityFactor));
         summary.put("daily_kpis", List.of(dailySummary));
+        summary.put("manual_advance_duration_ms", manualAdvanceDurationMs);
+        summary.put("manual_advance_phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
+        summary.put(
+          "schedule_generate_duration_ms",
+          (long) number(generatedSchedule.metrics, "schedule_generate_duration_ms", 0d)
+        );
+        summary.put(
+          "schedule_generate_phase_duration_ms",
+          generatedSchedule.metrics.get("schedule_generate_phase_duration_ms") instanceof Map<?, ?> phases
+            ? deepCopyMap((Map<String, Object>) phases)
+            : new LinkedHashMap<String, Object>()
+        );
+        summary.put("unscheduled_task_count", (int) number(generatedObservability, "unscheduled_task_count", 0d));
+        summary.put(
+          "unscheduled_reason_distribution",
+          generatedObservability.get("unscheduled_reason_distribution") instanceof Map<?, ?> reasons
+            ? deepCopyMap((Map<String, Object>) reasons)
+            : new LinkedHashMap<String, Object>()
+        );
+        summary.put(
+          "schedule_completion_rate",
+          number(generatedObservability, "schedule_completion_rate", number(generatedSchedule.metrics, "scheduleCompletionRate", 0d))
+        );
+        summary.put("locked_or_frozen_impact_count", (int) number(generatedObservability, "locked_or_frozen_impact_count", 0d));
+        summary.put("publish_count", (int) number(generatedObservability, "publish_count", 0d));
+        summary.put("rollback_count", (int) number(generatedObservability, "rollback_count", 0d));
+        summary.put("publish_rollback_count", (int) number(generatedObservability, "publish_rollback_count", 0d));
+        summary.put("replan_failure_rate", number(generatedObservability, "replan_failure_rate", 0d));
+        summary.put("api_error_rate", number(generatedObservability, "api_error_rate", 0d));
         simulationState.lastRunSummary = deepCopyMap(summary);
 
         appendSimulationEvent(
@@ -1073,9 +1167,34 @@ public class MvpStoreService {
           "SIM_RUN_DONE",
           "手动模拟推进一天完成。",
           requestId,
-          Map.of("version_no", versionNo, "days", 1, "reporting_count", reportingCount)
+          Map.of(
+            "version_no",
+            versionNo,
+            "days",
+            1,
+            "reporting_count",
+            reportingCount,
+            "manual_advance_duration_ms",
+            manualAdvanceDurationMs,
+            "manual_advance_phase_duration_ms",
+            new LinkedHashMap<>(phaseDurationMs)
+          )
         );
-        appendAudit("SIMULATION", "SIM-MANUAL-ADVANCE", "RUN_SIMULATION", operator, requestId, "手动模拟推进一天");
+        Map<String, Object> perfContext = new LinkedHashMap<>();
+        perfContext.put("request_id", requestId);
+        perfContext.put("version_no", versionNo);
+        perfContext.put("phase", "manual_advance_day");
+        perfContext.put("duration_ms", manualAdvanceDurationMs);
+        perfContext.put("phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
+        appendAudit(
+          "SIMULATION",
+          "SIM-MANUAL-ADVANCE",
+          "RUN_SIMULATION",
+          operator,
+          requestId,
+          "MANUAL_ADVANCE_DAY",
+          perfContext
+        );
 
         Map<String, Object> out = new LinkedHashMap<>(summary);
         out.put("version_no", versionNo);
@@ -1220,8 +1339,28 @@ public class MvpStoreService {
     synchronized (lock) {
       MvpDomain.ScheduleVersion schedule = getScheduleEntity(versionNo);
       List<Map<String, Object>> tasks = new ArrayList<>();
+      Map<String, MvpDomain.ScheduleTask> taskByTaskKey = new HashMap<>();
+      for (MvpDomain.ScheduleTask task : schedule.tasks) {
+        taskByTaskKey.put(task.taskKey, task);
+      }
+      Map<String, Map<String, Object>> unscheduledByTaskKey = new HashMap<>();
+      for (Map<String, Object> item : schedule.unscheduled) {
+        String taskKey = firstString(item, "taskKey", "task_key");
+        if (taskKey == null || taskKey.isBlank()) {
+          continue;
+        }
+        unscheduledByTaskKey.put(taskKey, item);
+      }
+      Set<String> scheduledTaskKeys = new HashSet<>();
       int id = 1;
       for (MvpDomain.Allocation allocation : schedule.allocations) {
+        scheduledTaskKeys.add(allocation.taskKey);
+        MvpDomain.ScheduleTask task = taskByTaskKey.get(allocation.taskKey);
+        Map<String, Object> unscheduled = unscheduledByTaskKey.get(allocation.taskKey);
+        String reasonCode = resolveUnscheduledReasonCode(unscheduled);
+        String dependencyStatus = resolveTaskDependencyStatus(task, unscheduled);
+        String lastBlockReason = resolveTaskLastBlockReason(task, unscheduled, reasonCode);
+        String taskStatus = resolveTaskStatus(task, unscheduled, true);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", id++);
         row.put("version_no", schedule.versionNo);
@@ -1235,6 +1374,43 @@ public class MvpStoreService {
         row.put("plan_qty", allocation.scheduledQty);
         row.put("lock_flag", findOrder(allocation.orderNo).lockFlag ? 1 : 0);
         row.put("priority", findOrder(allocation.orderNo).urgent ? 1 : 0);
+        row.put("dependency_status", dependencyStatus);
+        row.put("task_status", taskStatus);
+        row.put("last_block_reason", lastBlockReason);
+        row.put("unscheduled_reason_code", reasonCode);
+        row.put("unscheduled_reason_cn", reasonCode == null ? null : scheduleReasonNameCn(reasonCode));
+        tasks.add(localizeRow(row));
+      }
+      for (MvpDomain.ScheduleTask task : schedule.tasks) {
+        if (scheduledTaskKeys.contains(task.taskKey)) {
+          continue;
+        }
+        Map<String, Object> unscheduled = unscheduledByTaskKey.get(task.taskKey);
+        if (unscheduled == null) {
+          continue;
+        }
+        String reasonCode = resolveUnscheduledReasonCode(unscheduled);
+        String dependencyStatus = resolveTaskDependencyStatus(task, unscheduled);
+        String lastBlockReason = resolveTaskLastBlockReason(task, unscheduled, reasonCode);
+        String taskStatus = resolveTaskStatus(task, unscheduled, false);
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", id++);
+        row.put("version_no", schedule.versionNo);
+        row.put("order_no", task.orderNo);
+        row.put("order_type", "production");
+        row.put("process_code", task.processCode);
+        row.put("calendar_date", null);
+        row.put("shift_code", null);
+        row.put("plan_start_time", null);
+        row.put("plan_finish_time", null);
+        row.put("plan_qty", 0d);
+        row.put("lock_flag", findOrder(task.orderNo).lockFlag ? 1 : 0);
+        row.put("priority", findOrder(task.orderNo).urgent ? 1 : 0);
+        row.put("dependency_status", dependencyStatus);
+        row.put("task_status", taskStatus);
+        row.put("last_block_reason", lastBlockReason);
+        row.put("unscheduled_reason_code", reasonCode);
+        row.put("unscheduled_reason_cn", reasonCode == null ? null : scheduleReasonNameCn(reasonCode));
         tasks.add(localizeRow(row));
       }
       return tasks;
@@ -1244,6 +1420,7 @@ public class MvpStoreService {
   public Map<String, Object> getScheduleAlgorithm(String versionNo, String requestId) {
     synchronized (lock) {
       MvpDomain.ScheduleVersion schedule = getScheduleEntity(versionNo);
+      Map<String, Object> observabilityMetrics = buildScheduleObservabilityMetrics(schedule, null, null);
 
       Map<String, Object> summary = new LinkedHashMap<>();
       summary.put("task_count", schedule.tasks.size());
@@ -1251,8 +1428,30 @@ public class MvpStoreService {
       summary.put("order_count", schedule.tasks.stream().map(task -> task.orderNo).filter(Objects::nonNull).distinct().count());
       summary.put("target_qty", round2(number(schedule.metrics, "targetQty", 0d)));
       summary.put("scheduled_qty", round2(number(schedule.metrics, "scheduledQty", 0d)));
-      summary.put("schedule_completion_rate", round2(number(schedule.metrics, "scheduleCompletionRate", 0d)));
-      summary.put("unscheduled_task_count", schedule.unscheduled.size());
+      summary.put("schedule_completion_rate", round2(number(observabilityMetrics, "schedule_completion_rate", 0d)));
+      summary.put("unscheduled_task_count", (int) number(observabilityMetrics, "unscheduled_task_count", schedule.unscheduled.size()));
+      summary.put(
+        "schedule_generate_duration_ms",
+        (long) number(schedule.metrics, "schedule_generate_duration_ms", 0d)
+      );
+      summary.put(
+        "schedule_generate_phase_duration_ms",
+        schedule.metrics.get("schedule_generate_phase_duration_ms") instanceof Map<?, ?> phaseDuration
+          ? deepCopyMap((Map<String, Object>) phaseDuration)
+          : new LinkedHashMap<String, Object>()
+      );
+      summary.put(
+        "unscheduled_reason_distribution",
+        observabilityMetrics.get("unscheduled_reason_distribution") instanceof Map<?, ?> reasons
+          ? deepCopyMap((Map<String, Object>) reasons)
+          : new LinkedHashMap<String, Object>()
+      );
+      summary.put("locked_or_frozen_impact_count", (int) number(observabilityMetrics, "locked_or_frozen_impact_count", 0d));
+      summary.put("publish_count", (int) number(observabilityMetrics, "publish_count", 0d));
+      summary.put("rollback_count", (int) number(observabilityMetrics, "rollback_count", 0d));
+      summary.put("publish_rollback_count", (int) number(observabilityMetrics, "publish_rollback_count", 0d));
+      summary.put("replan_failure_rate", number(observabilityMetrics, "replan_failure_rate", 0d));
+      summary.put("api_error_rate", number(observabilityMetrics, "api_error_rate", 0d));
 
       List<String> logic = new ArrayList<>();
       logic.add("Order priority: urgent first, then due date, then order number.");
@@ -1267,7 +1466,7 @@ public class MvpStoreService {
         logic.add("Dependency rules: FS/SS.");
       }
       logic.add("Allocation is created only when dependency, resource, and material are all feasible in current shift.");
-      logic.add("Unscheduled tasks keep reason codes, for example CAPACITY_LIMIT.");
+      logic.add("Unscheduled tasks keep reason codes, for example CAPACITY_MANPOWER/FROZEN_BY_POLICY/LOCKED_PRESERVED.");
 
       List<Map<String, Object>> priorityPreview = state.orders.stream()
         .sorted(Comparator
@@ -1372,23 +1571,13 @@ public class MvpStoreService {
           unscheduledQtyByProcess.merge(processCode, number(row, "remainingQty", 0d), Double::sum);
         }
 
-        List<?> reasons = row.get("reasons") instanceof List<?> items ? items : List.of();
-        if (reasons.isEmpty()) {
-          reasonCount.merge("UNKNOWN", 1, Integer::sum);
-          if (!processCode.isBlank()) {
-            reasonCountByProcess.computeIfAbsent(processCode, key -> new HashMap<>()).merge("UNKNOWN", 1, Integer::sum);
-          }
-        } else {
-          for (Object reason : reasons) {
-            String code = normalizeCode(String.valueOf(reason));
-            if (code.isBlank()) {
-              code = "UNKNOWN";
-            }
-            reasonCount.merge(code, 1, Integer::sum);
-            if (!processCode.isBlank()) {
-              reasonCountByProcess.computeIfAbsent(processCode, key -> new HashMap<>()).merge(code, 1, Integer::sum);
-            }
-          }
+        String reasonCode = resolveUnscheduledReasonCode(row);
+        if (reasonCode == null || reasonCode.isBlank()) {
+          reasonCode = "UNKNOWN";
+        }
+        reasonCount.merge(reasonCode, 1, Integer::sum);
+        if (!processCode.isBlank()) {
+          reasonCountByProcess.computeIfAbsent(processCode, key -> new HashMap<>()).merge(reasonCode, 1, Integer::sum);
         }
 
         if (unscheduledSamples.size() >= 10) {
@@ -1399,7 +1588,9 @@ public class MvpStoreService {
         sample.put("order_no", string(row, "orderNo", null));
         sample.put("process_code", string(row, "processCode", null));
         sample.put("remaining_qty", round2(number(row, "remainingQty", 0d)));
-        sample.put("reasons", reasons);
+        sample.put("reason_code", reasonCode);
+        sample.put("reason_name_cn", scheduleReasonNameCn(reasonCode));
+        sample.put("reason_detail", string(row, "reason_detail", null));
         unscheduledSamples.add(localizeRow(sample));
       }
 
@@ -2084,18 +2275,40 @@ public class MvpStoreService {
     job.put("status", "RUNNING");
     job.put("created_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
     job.put("finished_at", null);
+    job.put("error_msg", "");
     state.replanJobs.add(job);
+    long startNanos = System.nanoTime();
+    String reason = string(payload, "reason", null);
+    try {
+      Map<String, Object> schedule = generateSchedule(
+        Map.of("request_id", requestId + ":generate", "base_version_no", baseVersionNo, "autoReplan", true),
+        requestId + ":generate",
+        operator
+      );
+      job.put("result_version_no", schedule.get("versionNo"));
+      job.put("status", "DONE");
+      job.put("finished_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
 
-    Map<String, Object> schedule = generateSchedule(
-      Map.of("request_id", requestId + ":generate", "base_version_no", baseVersionNo, "autoReplan", true),
-      requestId + ":generate",
-      operator
-    );
-    job.put("result_version_no", schedule.get("versionNo"));
-    job.put("status", "DONE");
-    job.put("finished_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
-    appendAudit("REPLAN_JOB", jobNo, "TRIGGER_REPLAN", operator, requestId, string(payload, "reason", null));
-    return new LinkedHashMap<>(job);
+      Map<String, Object> perfContext = new LinkedHashMap<>();
+      perfContext.put("request_id", requestId);
+      perfContext.put("phase", "replan_job");
+      perfContext.put("duration_ms", elapsedMillis(startNanos));
+      perfContext.put("result_version_no", schedule.get("versionNo"));
+      appendAudit("REPLAN_JOB", jobNo, "TRIGGER_REPLAN", operator, requestId, reason, perfContext);
+      return new LinkedHashMap<>(job);
+    } catch (RuntimeException ex) {
+      job.put("status", "FAILED");
+      job.put("finished_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
+      job.put("error_msg", ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+
+      Map<String, Object> perfContext = new LinkedHashMap<>();
+      perfContext.put("request_id", requestId);
+      perfContext.put("phase", "replan_job");
+      perfContext.put("duration_ms", elapsedMillis(startNanos));
+      perfContext.put("error_msg", job.get("error_msg"));
+      appendAudit("REPLAN_JOB", jobNo, "TRIGGER_REPLAN", operator, requestId, reason, perfContext);
+      throw ex;
+    }
   }
 
   private Map<String, Object> maybeTriggerProgressGapReplan(MvpDomain.Reporting reporting, String requestId, String operator) {
@@ -2280,6 +2493,8 @@ public class MvpStoreService {
       order.frozen = false;
     } else if ("PRIORITY".equals(commandType)) {
       order.urgent = true;
+    } else if ("UNPRIORITY".equals(commandType)) {
+      order.urgent = false;
     }
   }
 
@@ -2811,6 +3026,7 @@ public class MvpStoreService {
     row.put("expected_due_date", toDateTime(order.dueDate.toString(), "D", true));
     row.put("promised_due_date", toDateTime(order.dueDate.toString(), "D", true));
     row.put("urgent_flag", order.urgent ? 1 : 0);
+    row.put("lock_flag", order.lockFlag ? 1 : 0);
     row.put("frozen_flag", order.frozen ? 1 : 0);
     row.put("status", order.status);
     row.put("customer_remark", business.customerRemark);
@@ -2824,6 +3040,7 @@ public class MvpStoreService {
 
   private Map<String, Object> toScheduleMap(MvpDomain.ScheduleVersion schedule) {
     Map<String, Object> row = new LinkedHashMap<>();
+    boolean showDetailedReasons = bool(schedule.metadata, "showDetailedReasons", true);
     row.put("requestId", schedule.requestId);
     row.put("request_id", schedule.requestId);
     row.put("versionNo", schedule.versionNo);
@@ -2847,6 +3064,24 @@ public class MvpStoreService {
       taskRow.put("predecessorTaskKey", task.predecessorTaskKey);
       taskRow.put("targetQty", task.targetQty);
       taskRow.put("producedQty", task.producedQty);
+      taskRow.put("dependencyStatus", task.dependencyStatus);
+      taskRow.put("dependency_status", task.dependencyStatus);
+      taskRow.put("taskStatus", task.taskStatus);
+      taskRow.put("task_status", task.taskStatus);
+      taskRow.put("lastBlockReason", normalizeReasonCode(task.lastBlockReason));
+      taskRow.put("last_block_reason", normalizeReasonCode(task.lastBlockReason));
+      taskRow.put("lastBlockingDimension", showDetailedReasons ? task.lastBlockingDimension : null);
+      taskRow.put("last_blocking_dimension", showDetailedReasons ? task.lastBlockingDimension : null);
+      taskRow.put("lastBlockReasonDetail", showDetailedReasons ? task.lastBlockReasonDetail : null);
+      taskRow.put("last_block_reason_detail", showDetailedReasons ? task.lastBlockReasonDetail : null);
+      taskRow.put(
+        "lastBlockEvidence",
+        showDetailedReasons ? deepCopyMap(task.lastBlockEvidence == null ? Map.of() : task.lastBlockEvidence) : Map.of()
+      );
+      taskRow.put(
+        "last_block_evidence",
+        showDetailedReasons ? deepCopyMap(task.lastBlockEvidence == null ? Map.of() : task.lastBlockEvidence) : Map.of()
+      );
       tasks.add(taskRow);
     }
     row.put("tasks", tasks);
@@ -2870,7 +3105,16 @@ public class MvpStoreService {
     }
     row.put("allocations", allocations);
 
-    row.put("unscheduled", deepCopyList(schedule.unscheduled));
+    Map<String, MvpDomain.ScheduleTask> taskByTaskKey = new HashMap<>();
+    for (MvpDomain.ScheduleTask task : schedule.tasks) {
+      taskByTaskKey.put(task.taskKey, task);
+    }
+    List<Map<String, Object>> normalizedUnscheduled = new ArrayList<>();
+    for (Map<String, Object> unscheduledRow : schedule.unscheduled) {
+      String taskKey = firstString(unscheduledRow, "taskKey", "task_key");
+      normalizedUnscheduled.add(normalizeUnscheduledRow(unscheduledRow, taskByTaskKey.get(taskKey), showDetailedReasons));
+    }
+    row.put("unscheduled", normalizedUnscheduled);
     row.put("metrics", deepCopyMap(schedule.metrics));
     row.put("metadata", deepCopyMap(schedule.metadata));
     row.put("status", schedule.status);
@@ -2919,6 +3163,18 @@ public class MvpStoreService {
     String requestId,
     String reason
   ) {
+    appendAudit(entityType, entityId, action, operator, requestId, reason, null);
+  }
+
+  private void appendAudit(
+    String entityType,
+    String entityId,
+    String action,
+    String operator,
+    String requestId,
+    String reason,
+    Map<String, Object> perfContext
+  ) {
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("entity_type", entityType);
     row.put("entity_id", entityId);
@@ -2928,6 +3184,9 @@ public class MvpStoreService {
     row.put("request_id", requestId);
     row.put("operate_time", OffsetDateTime.now(ZoneOffset.UTC).toString());
     row.put("reason", reason);
+    if (perfContext != null && !perfContext.isEmpty()) {
+      row.put("perf_context", deepCopyMap(perfContext));
+    }
     state.auditLogs.add(row);
   }
 
@@ -3125,6 +3384,9 @@ public class MvpStoreService {
   }
 
   private static String firstString(Map<String, Object> row, String... keys) {
+    if (row == null || keys == null) {
+      return null;
+    }
     for (String key : keys) {
       Object value = row.get(key);
       if (value != null) {
@@ -3223,25 +3485,325 @@ public class MvpStoreService {
   private static int countCapacityBlocked(List<Map<String, Object>> unscheduled) {
     int count = 0;
     for (Map<String, Object> row : unscheduled) {
-      Object reasonsObj = row.get("reasons");
-      if (!(reasonsObj instanceof List<?> reasons)) {
+      String reasonCode = resolveUnscheduledReasonCode(row);
+      if (reasonCode == null) {
         continue;
       }
-      if (reasons.contains("CAPACITY_LIMIT")) {
+      if (
+        reasonCode.startsWith("CAPACITY_")
+          || "MATERIAL_SHORTAGE".equals(reasonCode)
+          || "CAPACITY_LIMIT".equals(reasonCode)
+      ) {
         count += 1;
       }
     }
     return count;
   }
 
+  private static int countByReasonCodes(List<Map<String, Object>> unscheduled, Set<String> reasonCodes) {
+    if (unscheduled == null || unscheduled.isEmpty() || reasonCodes == null || reasonCodes.isEmpty()) {
+      return 0;
+    }
+    int count = 0;
+    for (Map<String, Object> row : unscheduled) {
+      String reasonCode = resolveUnscheduledReasonCode(row);
+      if (reasonCode != null && reasonCodes.contains(normalizeReasonCode(reasonCode))) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private static Map<String, Integer> buildUnscheduledReasonDistribution(List<Map<String, Object>> unscheduled) {
+    Map<String, Integer> distribution = new LinkedHashMap<>();
+    if (unscheduled == null) {
+      return distribution;
+    }
+    for (Map<String, Object> row : unscheduled) {
+      String reasonCode = resolveUnscheduledReasonCode(row);
+      String normalized = normalizeReasonCode(reasonCode == null ? "UNKNOWN" : reasonCode);
+      if (normalized.isBlank()) {
+        normalized = "UNKNOWN";
+      }
+      distribution.merge(normalized, 1, Integer::sum);
+    }
+    return distribution;
+  }
+
+  private Map<String, Object> buildScheduleObservabilityMetrics(
+    MvpDomain.ScheduleVersion schedule,
+    Long candidateOrderCount,
+    Long candidateTaskCount
+  ) {
+    List<Map<String, Object>> unscheduled = schedule.unscheduled == null ? List.of() : schedule.unscheduled;
+    Map<String, Object> metrics = new LinkedHashMap<>();
+    Map<String, Integer> unscheduledReasonDistribution = buildUnscheduledReasonDistribution(unscheduled);
+    int lockedOrFrozenImpactCount = countByReasonCodes(
+      unscheduled,
+      Set.of("FROZEN_BY_POLICY", "LOCKED_PRESERVED")
+    );
+    double completionRate = round2(number(
+      schedule.metrics,
+      "schedule_completion_rate",
+      number(schedule.metrics, "scheduleCompletionRate", 0d)
+    ));
+    int publishCount = countPublishActions();
+    int rollbackCount = countRollbackActions();
+
+    metrics.put("unscheduled_reason_distribution", new LinkedHashMap<>(unscheduledReasonDistribution));
+    metrics.put("unscheduledReasonDistribution", new LinkedHashMap<>(unscheduledReasonDistribution));
+    metrics.put("unscheduled_task_count", unscheduled.size());
+    metrics.put("unscheduledTaskCount", unscheduled.size());
+    metrics.put("locked_or_frozen_impact_count", lockedOrFrozenImpactCount);
+    metrics.put("schedule_completion_rate", completionRate);
+    metrics.put("scheduleCompletionRate", completionRate);
+    if (candidateOrderCount != null) {
+      metrics.put("candidate_order_count", candidateOrderCount);
+    }
+    if (candidateTaskCount != null) {
+      metrics.put("candidate_task_count", candidateTaskCount);
+    }
+    metrics.put("publish_count", publishCount);
+    metrics.put("rollback_count", rollbackCount);
+    metrics.put("publish_rollback_count", publishCount + rollbackCount);
+    metrics.put("replan_failure_rate", round2(calcReplanFailureRate()));
+    metrics.put("api_error_rate", round2(calcApiErrorRate()));
+    return metrics;
+  }
+
+  private int countPublishActions() {
+    return countVersionActions(Set.of("PUBLISH_VERSION"));
+  }
+
+  private int countRollbackActions() {
+    return countVersionActions(Set.of("ROLLBACK_VERSION"));
+  }
+
+  private int countVersionActions(Set<String> actions) {
+    if (actions == null || actions.isEmpty()) {
+      return 0;
+    }
+    int count = 0;
+    for (Map<String, Object> row : state.auditLogs) {
+      String action = normalizeCode(firstString(row, "action"));
+      if (actions.contains(action)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private double calcReplanFailureRate() {
+    int total = state.replanJobs.size();
+    if (total <= 0) {
+      return 0d;
+    }
+    int failed = 0;
+    for (Map<String, Object> row : state.replanJobs) {
+      if ("FAILED".equals(normalizeCode(firstString(row, "status")))) {
+        failed += 1;
+      }
+    }
+    return (failed * 100d) / total;
+  }
+
+  private double calcApiErrorRate() {
+    int total = state.integrationInbox.size() + state.integrationOutbox.size() + state.replanJobs.size();
+    if (total <= 0) {
+      return 0d;
+    }
+    int failed = 0;
+    for (Map<String, Object> row : state.integrationInbox) {
+      if ("FAILED".equals(normalizeCode(firstString(row, "status")))) {
+        failed += 1;
+      }
+    }
+    for (Map<String, Object> row : state.integrationOutbox) {
+      if ("FAILED".equals(normalizeCode(firstString(row, "status")))) {
+        failed += 1;
+      }
+    }
+    for (Map<String, Object> row : state.replanJobs) {
+      if ("FAILED".equals(normalizeCode(firstString(row, "status")))) {
+        failed += 1;
+      }
+    }
+    return (failed * 100d) / total;
+  }
+
   private static String scheduleReasonNameCn(String reasonCode) {
     String normalized = normalizeCode(reasonCode);
     return switch (normalized) {
-      case "CAPACITY_LIMIT" -> "当前班次可用产能不足（人力/设备/物料受限）";
-      case "DEPENDENCY_LIMIT" -> "受前序工序约束，后序暂时不可继续排产";
+      case "CAPACITY_MANPOWER" -> "当前班次人力不足，无法继续排产";
+      case "CAPACITY_MACHINE" -> "当前班次设备不足，无法继续排产";
+      case "MATERIAL_SHORTAGE" -> "当前班次物料不足，无法继续排产";
+      case "DEPENDENCY_BLOCKED", "DEPENDENCY_LIMIT" -> "受前序工序约束，后序暂时不可继续排产";
+      case "FROZEN_BY_POLICY" -> "订单处于冻结策略中，不参与本轮排产";
+      case "LOCKED_PRESERVED" -> "订单已锁定并保留原计划，不参与本轮重排";
+      case "CAPACITY_LIMIT", "CAPACITY_UNKNOWN" -> "当前班次可用产能不足（人力/设备/物料受限）";
       case "UNKNOWN", "" -> "未标记原因";
       default -> normalized;
     };
+  }
+
+  private static String resolveUnscheduledReasonCode(Map<String, Object> unscheduledRow) {
+    if (unscheduledRow == null) {
+      return null;
+    }
+    String reasonCode = normalizeCode(firstString(unscheduledRow, "reason_code", "reasonCode", "last_block_reason", "lastBlockReason"));
+    if (!reasonCode.isBlank()) {
+      return normalizeReasonCode(reasonCode);
+    }
+    Object reasonsObj = unscheduledRow.get("reasons");
+    if (reasonsObj instanceof List<?> reasons) {
+      for (Object reason : reasons) {
+        String code = normalizeCode(String.valueOf(reason));
+        if (!code.isBlank()) {
+          return normalizeReasonCode(code);
+        }
+      }
+    }
+    return null;
+  }
+
+  private static String normalizeReasonCode(String reasonCode) {
+    String normalized = normalizeCode(reasonCode);
+    return switch (normalized) {
+      case "CAPACITY_LIMIT" -> "CAPACITY_UNKNOWN";
+      case "DEPENDENCY_LIMIT" -> "DEPENDENCY_BLOCKED";
+      default -> normalized;
+    };
+  }
+
+  private static String toLegacyReasonCode(String reasonCode) {
+    String normalized = normalizeReasonCode(reasonCode);
+    return switch (normalized) {
+      case "CAPACITY_MANPOWER", "CAPACITY_MACHINE", "MATERIAL_SHORTAGE", "CAPACITY_UNKNOWN" -> "CAPACITY_LIMIT";
+      case "DEPENDENCY_BLOCKED" -> "DEPENDENCY_LIMIT";
+      default -> normalized;
+    };
+  }
+
+  private Map<String, Object> normalizeUnscheduledRow(
+    Map<String, Object> unscheduledRow,
+    MvpDomain.ScheduleTask task,
+    boolean showDetailedReasons
+  ) {
+    Map<String, Object> normalized = deepCopyMap(unscheduledRow);
+    String reasonCode = resolveUnscheduledReasonCode(normalized);
+    String dependencyStatus = resolveTaskDependencyStatus(task, normalized);
+    String taskStatus = resolveTaskStatus(task, normalized, false);
+    String lastBlockReason = resolveTaskLastBlockReason(task, normalized, reasonCode);
+    String reasonDetail = firstString(normalized, "reason_detail", "reasonDetail");
+    if ((reasonDetail == null || reasonDetail.isBlank()) && task != null) {
+      reasonDetail = task.lastBlockReasonDetail;
+    }
+    String blockingDimension = firstString(normalized, "blocking_dimension", "blockingDimension");
+    if ((blockingDimension == null || blockingDimension.isBlank()) && task != null) {
+      blockingDimension = task.lastBlockingDimension;
+    }
+
+    Object evidenceRaw = normalized.get("evidence");
+    Map<String, Object> evidence;
+    if (evidenceRaw instanceof Map<?, ?>) {
+      evidence = objectMapper.convertValue(evidenceRaw, new TypeReference<LinkedHashMap<String, Object>>() {});
+    } else if (task != null && task.lastBlockEvidence != null) {
+      evidence = deepCopyMap(task.lastBlockEvidence);
+    } else {
+      evidence = new LinkedHashMap<>();
+    }
+
+    List<String> reasons = new ArrayList<>();
+    Object reasonsObj = normalized.get("reasons");
+    if (reasonsObj instanceof List<?> reasonList) {
+      for (Object reason : reasonList) {
+        String code = normalizeReasonCode(String.valueOf(reason));
+        if (!code.isBlank() && !reasons.contains(code)) {
+          reasons.add(code);
+        }
+      }
+    }
+    if (reasonCode != null && !reasonCode.isBlank() && !reasons.contains(reasonCode)) {
+      reasons.add(0, reasonCode);
+    }
+    if (!reasons.isEmpty()) {
+      String legacyReason = toLegacyReasonCode(reasons.get(0));
+      if (!legacyReason.isBlank() && !reasons.contains(legacyReason)) {
+        reasons.add(legacyReason);
+      }
+    }
+
+    normalized.put("reason_code", reasonCode);
+    normalized.put("reasonCode", reasonCode);
+    normalized.put("dependency_status", dependencyStatus);
+    normalized.put("dependencyStatus", dependencyStatus);
+    normalized.put("task_status", taskStatus);
+    normalized.put("taskStatus", taskStatus);
+    normalized.put("last_block_reason", lastBlockReason);
+    normalized.put("lastBlockReason", lastBlockReason);
+    normalized.put("reasons", reasons);
+
+    if (showDetailedReasons) {
+      normalized.put("reason_detail", reasonDetail);
+      normalized.put("reasonDetail", reasonDetail);
+      normalized.put("blocking_dimension", blockingDimension);
+      normalized.put("blockingDimension", blockingDimension);
+      normalized.put("evidence", evidence);
+    } else {
+      normalized.remove("reason_detail");
+      normalized.remove("reasonDetail");
+      normalized.remove("blocking_dimension");
+      normalized.remove("blockingDimension");
+      normalized.put("evidence", new LinkedHashMap<>());
+    }
+    return normalized;
+  }
+
+  private static String resolveTaskDependencyStatus(MvpDomain.ScheduleTask task, Map<String, Object> unscheduledRow) {
+    String dependencyStatus = task == null ? null : normalizeCode(task.dependencyStatus);
+    if (dependencyStatus == null || dependencyStatus.isBlank()) {
+      dependencyStatus = normalizeCode(firstString(unscheduledRow, "dependency_status", "dependencyStatus"));
+    }
+    if (dependencyStatus == null || dependencyStatus.isBlank()) {
+      return "READY";
+    }
+    return dependencyStatus;
+  }
+
+  private static String resolveTaskLastBlockReason(
+    MvpDomain.ScheduleTask task,
+    Map<String, Object> unscheduledRow,
+    String fallbackReasonCode
+  ) {
+    String reasonCode = normalizeReasonCode(firstString(unscheduledRow, "last_block_reason", "lastBlockReason"));
+    if ((reasonCode == null || reasonCode.isBlank()) && task != null) {
+      reasonCode = normalizeReasonCode(task.lastBlockReason);
+    }
+    if ((reasonCode == null || reasonCode.isBlank()) && fallbackReasonCode != null) {
+      reasonCode = normalizeReasonCode(fallbackReasonCode);
+    }
+    if (reasonCode == null || reasonCode.isBlank()) {
+      return null;
+    }
+    return reasonCode;
+  }
+
+  private static String resolveTaskStatus(
+    MvpDomain.ScheduleTask task,
+    Map<String, Object> unscheduledRow,
+    boolean hasAllocation
+  ) {
+    String taskStatus = task == null ? null : normalizeCode(task.taskStatus);
+    if (taskStatus == null || taskStatus.isBlank()) {
+      taskStatus = normalizeCode(firstString(unscheduledRow, "task_status", "taskStatus"));
+    }
+    if (taskStatus == null || taskStatus.isBlank()) {
+      if (!hasAllocation) {
+        return "UNSCHEDULED";
+      }
+      return unscheduledRow == null ? "READY" : "PARTIALLY_ALLOCATED";
+    }
+    return taskStatus;
   }
 
   private static String topReasonCode(Map<String, Integer> reasonCountByCode) {
@@ -4016,6 +4578,10 @@ public class MvpStoreService {
 
   private static double round2(double value) {
     return Math.round(value * 100d) / 100d;
+  }
+
+  private static long elapsedMillis(long startNanos) {
+    return Math.max(0L, (System.nanoTime() - startNanos) / 1_000_000L);
   }
 
   private static final class ReportVersionBinding {

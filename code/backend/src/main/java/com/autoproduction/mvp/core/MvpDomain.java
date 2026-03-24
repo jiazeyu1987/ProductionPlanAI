@@ -258,6 +258,12 @@ final class MvpDomain {
     String predecessorTaskKey;
     double targetQty;
     double producedQty;
+    String dependencyStatus;
+    String taskStatus;
+    String lastBlockReason;
+    String lastBlockReasonDetail;
+    String lastBlockingDimension;
+    Map<String, Object> lastBlockEvidence = new HashMap<>();
   }
 
   static final class Allocation {
