@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SimpleTable from "../components/SimpleTable";
-import { loadList, postLegacy } from "../services/api";
+import { loadList, postContract, postLegacy } from "../services/api";
 
 const REASON_TEXT = {
-  NONE: "无（已排满）",
+  NONE: "无",
   CAPACITY_MANPOWER: "人力不足",
   CAPACITY_MACHINE: "设备不足",
   CAPACITY_UNKNOWN: "综合产能不足",
@@ -218,13 +218,13 @@ function buildOrderAllocationRows(schedule, orderItems, taskItems = []) {
           : (totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0);
       const qtyShareRaw = totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0;
 
-      let explain = `按“加急优先、交期优先、订单号稳定排序”规则，${priorityLabel}（交期 ${dueDate}）获得了当前草稿资源分配。`;
+      let explain = `按“加急优先、交期优先、订单号稳定排序”规则，${priorityLabel} 交期 ${dueDate} 获得了当前草稿资源分配。`;
       if (item.scheduled_qty <= 1e-9 && item.unscheduled_qty > 1e-9) {
-        explain += ` 当前未分配到可执行资源，主要瓶颈是“${reasonToText(topReasonCode)}（${dimensionToText(topDimension)}）”。`;
+        explain += ` 当前未分配到可执行资源，主要瓶颈是“${reasonToText(topReasonCode)}，${dimensionToText(topDimension)}”。`;
       } else if (item.unscheduled_qty > 1e-9) {
         explain +=
           ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}；` +
-          `仍有 ${formatQty(item.unscheduled_qty)} 未排，主要瓶颈是“${reasonToText(topReasonCode)}（${dimensionToText(topDimension)}）”。`;
+          `仍有 ${formatQty(item.unscheduled_qty)} 未排，主要瓶颈是“${reasonToText(topReasonCode)}，${dimensionToText(topDimension)}”。`;
       } else {
         explain +=
           ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}，` +
@@ -263,10 +263,17 @@ export default function ScheduleBoardPage() {
   const [selected, setSelected] = useState("");
   const [tasks, setTasks] = useState([]);
   const [orderAllocationRows, setOrderAllocationRows] = useState([]);
+  const [dailyProcessLoadRows, setDailyProcessLoadRows] = useState([]);
   const [algorithmDetail, setAlgorithmDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [message, setMessage] = useState("");
   const detailRequestSeqRef = useRef(0);
+  const selectedVersion = useMemo(
+    () => versions.find((item) => normalizeVersionNo(item) === selected) || null,
+    [selected, versions]
+  );
+  const canPublishSelected = String(selectedVersion?.status || "").toUpperCase() === "DRAFT";
 
   const boardSummary = useMemo(() => {
     if (!orderAllocationRows.length) {
@@ -312,6 +319,7 @@ export default function ScheduleBoardPage() {
       setTasks([]);
       setAlgorithmDetail(null);
       setOrderAllocationRows([]);
+      setDailyProcessLoadRows([]);
       setDetailLoading(false);
       return;
     }
@@ -319,12 +327,14 @@ export default function ScheduleBoardPage() {
     setTasks([]);
     setAlgorithmDetail(null);
     setOrderAllocationRows([]);
+    setDailyProcessLoadRows([]);
     try {
-      const [tasksRes, algorithmRes, schedulesRes, orderPoolRes] = await Promise.all([
+      const [tasksRes, algorithmRes, schedulesRes, orderPoolRes, dailyLoadRes] = await Promise.all([
         loadList(`/internal/v1/internal/schedule-versions/${versionNo}/tasks`),
         loadList(`/internal/v1/internal/schedule-versions/${versionNo}/algorithm`),
         loadList("/api/schedules"),
-        loadList("/internal/v1/internal/order-pool")
+        loadList("/internal/v1/internal/order-pool"),
+        loadList(`/internal/v1/internal/schedule-versions/${versionNo}/daily-process-load`)
       ]);
       if (requestSeq !== detailRequestSeqRef.current) {
         return;
@@ -334,6 +344,7 @@ export default function ScheduleBoardPage() {
       const scheduleItems = schedulesRes.items ?? [];
       const selectedSchedule = scheduleItems.find((item) => normalizeVersionNo(item) === versionNo);
       setOrderAllocationRows(buildOrderAllocationRows(selectedSchedule, orderPoolRes.items ?? [], tasksRes.items ?? []));
+      setDailyProcessLoadRows(dailyLoadRes.items ?? []);
     } finally {
       if (requestSeq === detailRequestSeqRef.current) {
         setDetailLoading(false);
@@ -355,6 +366,32 @@ export default function ScheduleBoardPage() {
     }
   }
 
+  async function publishSelectedDraft() {
+    if (!selected) {
+      setMessage("请先选择草稿版本。");
+      return;
+    }
+    if (!canPublishSelected) {
+      setMessage("当前选择的版本不是草稿，无法发布。");
+      return;
+    }
+    setPublishing(true);
+    setMessage("");
+    try {
+      await postContract(`/internal/v1/internal/schedule-versions/${selected}/publish`, {
+        operator: "publisher01",
+        reason: "调度台发布草稿"
+      });
+      setMessage(`已发布版本：${selected}`);
+      await loadVersions();
+      await loadVersionDetail(selected);
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   useEffect(() => {
     loadVersions().catch(() => {});
   }, []);
@@ -365,9 +402,15 @@ export default function ScheduleBoardPage() {
 
   return (
     <section>
-      <h2>调度台（甘特/列表）</h2>
+      <h2>调度台</h2>
       <div className="toolbar">
         <button onClick={() => generate().catch((e) => setMessage(e.message))}>生成草稿版本</button>
+        <button
+          disabled={!selected || !canPublishSelected || publishing}
+          onClick={() => publishSelectedDraft().catch((e) => setMessage(e.message))}
+        >
+          {publishing ? "发布中..." : "发布草稿"}
+        </button>
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
           <option value="">请选择版本</option>
           {versions.map((item) => (
@@ -380,7 +423,7 @@ export default function ScheduleBoardPage() {
 
       {message ? <p className="notice">{message}</p> : null}
       <p className="hint">
-        订单列展示的是生产订单号。一个订单会被拆成多行任务（不同工序/日期/班次），所以会重复出现，这是正常现象。
+        订单列展示的是生产订单号。一个订单会被拆成多行任务，不同工序/日期/班次，所以会重复出现，这是正常现象。
       </p>
       <p className="hint">
         下面“资源占比”按当前草稿中的人力+设备用量估算；如果该单没有资源用量数据，回退为计划量占比。
@@ -408,7 +451,7 @@ export default function ScheduleBoardPage() {
       ) : null}
 
       <div className="panel">
-        <h3>当前草稿怎么分配（按订单）</h3>
+        <h3>分配列表</h3>
         {detailLoading ? <p className="hint">正在切换草稿并刷新分配解释...</p> : null}
         {algorithmDetail ? (
           <p className="hint">
@@ -451,7 +494,7 @@ export default function ScheduleBoardPage() {
       </div>
 
       <div className="panel">
-        <h3>任务明细（按工序/班次）</h3>
+        <h3>任务明细</h3>
         <p className="hint">受影响任务：{tasks.length} 条。</p>
         <SimpleTable
           columns={[
@@ -492,6 +535,22 @@ export default function ScheduleBoardPage() {
             { key: "plan_qty", title: "计划量", render: (value) => formatQty(value) }
           ]}
           rows={tasks}
+        />
+      </div>
+
+      <div className="panel">
+        <h3>每天工序工作量与最大产能</h3>
+        <p className="hint">按 日期 × 工序 展示当天已安排量、当天最大产能与负荷率。</p>
+        <SimpleTable
+          columns={[
+            { key: "calendar_date", title: "日期" },
+            { key: "process_name_cn", title: "工序" },
+            { key: "scheduled_qty", title: "已安排量", render: (value) => formatQty(value) },
+            { key: "max_capacity_qty", title: "最大产能", render: (value) => formatQty(value) },
+            { key: "load_rate", title: "负荷率", render: (value) => formatPercent(value) },
+            { key: "open_shift_count", title: "开放班次数", render: (value) => formatQty(value) }
+          ]}
+          rows={dailyProcessLoadRows}
         />
       </div>
     </section>

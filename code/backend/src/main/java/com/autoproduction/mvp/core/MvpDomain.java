@@ -22,6 +22,8 @@ final class MvpDomain {
     List<ShiftRow> shiftCalendar = new ArrayList<>();
     List<ResourceRow> workerPools = new ArrayList<>();
     List<ResourceRow> machinePools = new ArrayList<>();
+    List<ResourceRow> initialWorkerOccupancy = new ArrayList<>();
+    List<ResourceRow> initialMachineOccupancy = new ArrayList<>();
     List<MaterialRow> materialAvailability = new ArrayList<>();
     List<Order> orders = new ArrayList<>();
 

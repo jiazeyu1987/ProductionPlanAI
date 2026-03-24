@@ -54,11 +54,11 @@ final class SchedulerEngine {
     Set<String> lockedOrderSet = lockedOrders == null ? Set.of() : new HashSet<>(lockedOrders);
 
     List<Map<String, Object>> shifts = buildShifts(state);
-    Map<String, Integer> workerByShiftProcess = resourceIndex(state.workerPools);
-    Map<String, Integer> machineByShiftProcess = resourceIndex(state.machinePools);
+    Map<String, Integer> workerByShiftProcess = effectiveResourceIndex(state.workerPools, state.initialWorkerOccupancy);
+    Map<String, Integer> machineByShiftProcess = effectiveResourceIndex(state.machinePools, state.initialMachineOccupancy);
     Map<String, Double> materialByShiftProductProcess = materialIndex(state.materialAvailability);
-    Map<String, Integer> maxWorkersByProcess = maxResourceByProcess(state.workerPools);
-    Map<String, Integer> maxMachinesByProcess = maxResourceByProcess(state.machinePools);
+    Map<String, Integer> maxWorkersByProcess = maxResourceByProcess(workerByShiftProcess);
+    Map<String, Integer> maxMachinesByProcess = maxResourceByProcess(machineByShiftProcess);
     Map<String, Double> totalMaterialByProductProcess = totalMaterialByProductProcess(state.materialAvailability);
     Map<String, MvpDomain.ProcessConfig> processConfigMap = new HashMap<>();
     for (MvpDomain.ProcessConfig process : state.processes) {
@@ -653,15 +653,39 @@ final class SchedulerEngine {
   private static Map<String, Integer> resourceIndex(List<MvpDomain.ResourceRow> rows) {
     Map<String, Integer> out = new HashMap<>();
     for (MvpDomain.ResourceRow row : rows) {
-      out.put(row.date + "#" + row.shiftCode + "#" + row.processCode, row.available);
+      out.put(row.date + "#" + row.shiftCode + "#" + row.processCode, Math.max(0, row.available));
     }
     return out;
   }
 
-  private static Map<String, Integer> maxResourceByProcess(List<MvpDomain.ResourceRow> rows) {
+  private static Map<String, Integer> effectiveResourceIndex(
+    List<MvpDomain.ResourceRow> capacityRows,
+    List<MvpDomain.ResourceRow> occupiedRows
+  ) {
+    Map<String, Integer> capacity = resourceIndex(capacityRows);
+    Map<String, Integer> occupied = resourceIndex(occupiedRows);
     Map<String, Integer> out = new HashMap<>();
-    for (MvpDomain.ResourceRow row : rows) {
-      out.merge(row.processCode, row.available, Math::max);
+    for (Map.Entry<String, Integer> entry : capacity.entrySet()) {
+      int gross = Math.max(0, entry.getValue());
+      int used = Math.max(0, occupied.getOrDefault(entry.getKey(), 0));
+      out.put(entry.getKey(), Math.max(0, gross - used));
+    }
+    return out;
+  }
+
+  private static Map<String, Integer> maxResourceByProcess(Map<String, Integer> byShiftProcess) {
+    Map<String, Integer> out = new HashMap<>();
+    for (Map.Entry<String, Integer> entry : byShiftProcess.entrySet()) {
+      String key = entry.getKey();
+      if (key == null) {
+        continue;
+      }
+      int idx = key.lastIndexOf('#');
+      if (idx < 0 || idx + 1 >= key.length()) {
+        continue;
+      }
+      String processCode = key.substring(idx + 1);
+      out.merge(processCode, Math.max(0, entry.getValue()), Math::max);
     }
     return out;
   }

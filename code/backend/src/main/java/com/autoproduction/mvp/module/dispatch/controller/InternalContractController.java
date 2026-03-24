@@ -43,6 +43,39 @@ public class InternalContractController {
     return listResponse(request, store.listScheduleTasks(versionNo));
   }
 
+  @GetMapping("/schedule-versions/{versionNo}/daily-process-load")
+  public ResponseEntity<Map<String, Object>> listScheduleDailyProcessLoad(
+    HttpServletRequest request,
+    @PathVariable("versionNo") String versionNo
+  ) {
+    return listResponse(request, store.listScheduleDailyProcessLoad(versionNo));
+  }
+
+  @GetMapping("/schedule-versions/{versionNo}/shift-process-load")
+  public ResponseEntity<Map<String, Object>> listScheduleShiftProcessLoad(
+    HttpServletRequest request,
+    @PathVariable("versionNo") String versionNo
+  ) {
+    return listResponse(request, store.listScheduleShiftProcessLoad(versionNo));
+  }
+
+  @GetMapping("/masterdata/config")
+  public ResponseEntity<Map<String, Object>> getMasterdataConfig(HttpServletRequest request) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    return ApiSupport.ok(requestId, store.getMasterdataConfig(requestId));
+  }
+
+  @PostMapping("/masterdata/config")
+  public ResponseEntity<Map<String, Object>> saveMasterdataConfig(
+    HttpServletRequest request,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
+    return ApiSupport.ok(requestId, store.saveMasterdataConfig(body, requestId, operator));
+  }
+
   @GetMapping("/schedule-versions/{versionNo}/diff")
   public ResponseEntity<Map<String, Object>> getVersionDiff(
     HttpServletRequest request,

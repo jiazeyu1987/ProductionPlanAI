@@ -69,19 +69,20 @@ export default function DispatchCommandsPage() {
           { key: "command_type", title: "类型" },
           { key: "target_order_no", title: "订单" },
           { key: "approved_flag", title: "审批通过" },
-          { key: "created_by", title: "创建人" }
+          { key: "created_by", title: "创建人" },
+          {
+            key: "actions",
+            title: "操作",
+            render: (_, row) => (
+              <div className="row-actions">
+                <button onClick={() => approve(row.command_id, "APPROVED").catch(() => {})}>批准</button>
+                <button onClick={() => approve(row.command_id, "REJECTED").catch(() => {})}>驳回</button>
+              </div>
+            )
+          }
         ]}
         rows={rows}
       />
-      <div className="chip-list">
-        {rows.map((row) => (
-          <div className="chip-row" key={row.command_id}>
-            <span>{row.command_id}</span>
-            <button onClick={() => approve(row.command_id, "APPROVED").catch(() => {})}>批准</button>
-            <button onClick={() => approve(row.command_id, "REJECTED").catch(() => {})}>驳回</button>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }
