@@ -129,3 +129,37 @@ python .\scripts\check_artifacts.py
 ## 6. 契约来源
 - 外部接口：`openapi/scheduling-v1.yaml`
 - 内部接口：`openapi/scheduling-internal-v1.yaml`
+
+## 7. 发布到测试服务器（Docker）
+### 7.1 测试环境编排文件
+- `ops/docker-compose.test.yml`：测试环境 `PostgreSQL + backend + frontend`。
+- `ops/.env.test.example`：测试环境默认参数模板。
+
+### 7.2 本机一键发布到测试
+默认目标为已确认测试服务器：`root@172.30.30.58`。
+
+```bash
+cd code
+powershell -ExecutionPolicy Bypass -File .\scripts\publish_local_to_test.ps1
+```
+
+脚本执行流程：
+1. 本机构建镜像：`autoproduction-backend:<VERSION>`、`autoproduction-frontend:<VERSION>`
+2. `docker save` 导出镜像包
+3. `scp` 上传镜像包、`docker-compose.test.yml`、`.env.test`
+4. 测试机 `docker load` + `docker compose up -d`
+5. 自动健康检查：`/api/health`
+
+发布成功后，默认访问地址：
+- `http://172.30.30.58:18080`
+
+### 7.3 常用参数
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\publish_local_to_test.ps1 `
+  -Version 20260324_153000 `
+  -AppHttpPort 18080 `
+  -ComposeProjectName autoproduction-test `
+  -CorsAllowedOrigins "http://localhost:5932,http://127.0.0.1:5932,http://172.30.30.58:18080" `
+  -TestHost 172.30.30.58 `
+  -TestUser root
+```

@@ -1,0 +1,10 @@
+target
+.git
+.gitignore
+*.iml
+.idea
+.vscode
+logs
+*.log
+backend.run.out.log
+backend.run.err.log
