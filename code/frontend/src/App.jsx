@@ -12,11 +12,13 @@ import PlanReportsPage from "./pages/PlanReportsPage";
 import ScheduleBoardPage from "./pages/ScheduleBoardPage";
 import ScheduleVersionsPage from "./pages/ScheduleVersionsPage";
 import SimulationPage from "./pages/SimulationPage";
+import LiteSchedulerPage from "./pages/LiteSchedulerPage";
 
 const links = [
   ["/dashboard", "看板"],
   ["/orders/pool", "生产订单"],
   ["/schedule/board", "调度台"],
+  ["/schedule/lite", "简版排产"],
   ["/reports/plans", "计划报表"],
   ["/schedule/versions", "排产历史"],
   ["/dispatch/commands", "指令审批"],
@@ -49,6 +51,7 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/orders/pool" element={<OrdersPoolPage />} />
           <Route path="/schedule/board" element={<ScheduleBoardPage />} />
+          <Route path="/schedule/lite" element={<LiteSchedulerPage />} />
           <Route path="/reports/plans" element={<PlanReportsPage />} />
           <Route path="/schedule/versions" element={<ScheduleVersionsPage />} />
           <Route path="/dispatch/commands" element={<DispatchCommandsPage />} />
