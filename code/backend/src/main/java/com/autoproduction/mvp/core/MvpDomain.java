@@ -60,6 +60,7 @@ final class MvpDomain {
     String orderNo;
     String orderType;
     LocalDate dueDate;
+    LocalDate expectedStartDate;
     boolean urgent;
     boolean frozen;
     boolean lockFlag;
@@ -71,6 +72,7 @@ final class MvpDomain {
       String orderNo,
       String orderType,
       LocalDate dueDate,
+      LocalDate expectedStartDate,
       boolean urgent,
       boolean frozen,
       boolean lockFlag,
@@ -81,6 +83,7 @@ final class MvpDomain {
       this.orderNo = orderNo;
       this.orderType = orderType;
       this.dueDate = dueDate;
+      this.expectedStartDate = expectedStartDate;
       this.urgent = urgent;
       this.frozen = frozen;
       this.lockFlag = lockFlag;

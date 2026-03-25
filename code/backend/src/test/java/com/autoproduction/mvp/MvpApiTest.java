@@ -116,6 +116,8 @@ class MvpApiTest {
       )
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.version_no").value("V001"))
+      .andExpect(jsonPath("$.strategy_code").isString())
+      .andExpect(jsonPath("$.strategy_name_cn").isString())
       .andExpect(jsonPath("$.summary.task_count").isNumber())
       .andExpect(jsonPath("$.summary.schedule_generate_duration_ms").isNumber())
       .andExpect(jsonPath("$.summary.schedule_generate_phase_duration_ms").isMap())
@@ -135,6 +137,28 @@ class MvpApiTest {
       .andExpect(jsonPath("$.process_summary[0].unscheduled_qty").isNumber())
       .andExpect(jsonPath("$.process_summary[0].schedule_rate").isNumber())
       .andExpect(jsonPath("$.unscheduled_reason_summary").isArray());
+  }
+
+  @Test
+  void generateScheduleSupportsStrategyOption() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-strategy-generate",
+            "strategy_code", "MAX_CAPACITY_FIRST"
+          )))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"))
+      .andExpect(jsonPath("$.metadata.schedule_strategy_code").value("MAX_CAPACITY_FIRST"));
+
+    mockMvc.perform(
+        get("/internal/v1/internal/schedule-versions/V001/algorithm")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.strategy_code").value("MAX_CAPACITY_FIRST"));
   }
 
   @Test

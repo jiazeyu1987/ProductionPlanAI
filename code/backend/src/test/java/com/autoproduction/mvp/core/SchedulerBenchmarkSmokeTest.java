@@ -144,6 +144,7 @@ class SchedulerBenchmarkSmokeTest {
         template.orderNo + "-" + suffix,
         template.orderType,
         template.dueDate.plusDays(i % 7),
+        template.expectedStartDate == null ? null : template.expectedStartDate.plusDays(i % 3),
         urgent,
         frozen,
         locked,

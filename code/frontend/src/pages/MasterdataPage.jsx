@@ -11,6 +11,9 @@ const CONFIG_SUB_PROCESS = "process";
 const CONFIG_SUB_RESOURCE = "resource";
 const CONFIG_SUB_CARRYOVER = "carryover";
 const CONFIG_SUB_MATERIAL = "material";
+const ROUTE_EDITOR_CREATE = "create";
+const ROUTE_EDITOR_EDIT = "edit";
+const ROUTE_EDITOR_COPY = "copy";
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -54,6 +57,18 @@ function toNumber(value, fallback = 0) {
 
 function toInt(value, fallback = 0) {
   return Math.max(0, Math.round(toNumber(value, fallback)));
+}
+
+function normalizeDependencyType(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return normalized === "SS" ? "SS" : "FS";
+}
+
+function createEmptyRouteStep() {
+  return {
+    process_code: "",
+    dependency_type: "FS"
+  };
 }
 
 function parseConfigResponse(raw) {
@@ -109,23 +124,32 @@ export default function MasterdataPage() {
   const [saveMessage, setSaveMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [activeConfigSubTab, setActiveConfigSubTab] = useState(CONFIG_SUB_WINDOW);
+  const [routeEditorOpen, setRouteEditorOpen] = useState(false);
+  const [routeEditorMode, setRouteEditorMode] = useState(ROUTE_EDITOR_CREATE);
+  const [routeSourceProductCode, setRouteSourceProductCode] = useState("");
+  const [routeTargetProductCode, setRouteTargetProductCode] = useState("");
+  const [routeStepsDraft, setRouteStepsDraft] = useState([createEmptyRouteStep()]);
+  const [routeSaving, setRouteSaving] = useState(false);
+  const [routeMessage, setRouteMessage] = useState("");
+  const [routeError, setRouteError] = useState("");
 
-  useEffect(() => {
-    Promise.all([
+  async function refreshMasterdata() {
+    const [routeRes, equipmentRes, configRes] = await Promise.all([
       loadList("/v1/mes/process-routes"),
       loadList("/v1/mes/equipments"),
       loadList("/internal/v1/internal/masterdata/config").catch(() => null)
-    ])
-      .then(([routeRes, equipmentRes, configRes]) => {
-        setRoutes(routeRes.items ?? []);
-        setEquipments(equipmentRes.items ?? []);
-        if (configRes) {
-          const parsed = parseConfigResponse(configRes);
-          setConfigData(parsed);
-          setSelectedConfigDate((prev) => prev || firstDateFromConfig(parsed));
-        }
-      })
-      .catch(() => {});
+    ]);
+    setRoutes(routeRes.items ?? []);
+    setEquipments(equipmentRes.items ?? []);
+    if (configRes) {
+      const parsed = parseConfigResponse(configRes);
+      setConfigData(parsed);
+      setSelectedConfigDate((prev) => prev || firstDateFromConfig(parsed));
+    }
+  }
+
+  useEffect(() => {
+    refreshMasterdata().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -187,6 +211,49 @@ export default function MasterdataPage() {
 
     return result;
   }, [filteredRoutes]);
+
+  const routeStepsByProduct = useMemo(() => {
+    const map = new Map();
+    for (const row of routes) {
+      const productCode = String(row.product_code || "").trim().toUpperCase();
+      if (!productCode) {
+        continue;
+      }
+      const list = map.get(productCode) || [];
+      list.push({
+        process_code: String(row.process_code || "").trim().toUpperCase(),
+        dependency_type: normalizeDependencyType(row.dependency_type),
+        sequence_no: toNumber(row.sequence_no, list.length + 1)
+      });
+      map.set(productCode, list);
+    }
+    for (const [productCode, list] of map.entries()) {
+      list.sort((a, b) => toNumber(a.sequence_no, 0) - toNumber(b.sequence_no, 0));
+      map.set(productCode, list);
+    }
+    return map;
+  }, [routes]);
+
+  const processOptions = useMemo(() => {
+    const byCode = new Map();
+    for (const row of configData.processConfigs) {
+      const processCode = String(row.process_code || "").trim().toUpperCase();
+      if (!processCode) {
+        continue;
+      }
+      byCode.set(processCode, row.process_name_cn || row.process_name || processCode);
+    }
+    for (const row of routes) {
+      const processCode = String(row.process_code || "").trim().toUpperCase();
+      if (!processCode || byCode.has(processCode)) {
+        continue;
+      }
+      byCode.set(processCode, row.process_name_cn || row.process_name || processCode);
+    }
+    return [...byCode.entries()]
+      .map(([code, name]) => ({ code, name: String(name || code).trim() || code }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), "zh-Hans-CN"));
+  }, [configData.processConfigs, routes]);
 
   const processDetails = useMemo(() => {
     if (!processCodeFilter) {
@@ -419,6 +486,153 @@ export default function MasterdataPage() {
     return map;
   }, [configData.resourcePool]);
 
+  function buildRouteStepsDraft(productCode) {
+    const rows = routeStepsByProduct.get(String(productCode || "").trim().toUpperCase()) || [];
+    if (rows.length === 0) {
+      return [createEmptyRouteStep()];
+    }
+    return rows.map((row) => ({
+      process_code: String(row.process_code || "").trim().toUpperCase(),
+      dependency_type: normalizeDependencyType(row.dependency_type)
+    }));
+  }
+
+  function openCreateRouteEditor() {
+    setRouteEditorOpen(true);
+    setRouteEditorMode(ROUTE_EDITOR_CREATE);
+    setRouteSourceProductCode("");
+    setRouteTargetProductCode("");
+    setRouteStepsDraft([createEmptyRouteStep()]);
+    setRouteMessage("");
+    setRouteError("");
+  }
+
+  function openEditRouteEditor(productCode) {
+    const normalized = String(productCode || "").trim().toUpperCase();
+    setRouteEditorOpen(true);
+    setRouteEditorMode(ROUTE_EDITOR_EDIT);
+    setRouteSourceProductCode(normalized);
+    setRouteTargetProductCode(normalized);
+    setRouteStepsDraft(buildRouteStepsDraft(normalized));
+    setRouteMessage("");
+    setRouteError("");
+  }
+
+  function openCopyRouteEditor(productCode) {
+    const normalized = String(productCode || "").trim().toUpperCase();
+    setRouteEditorOpen(true);
+    setRouteEditorMode(ROUTE_EDITOR_COPY);
+    setRouteSourceProductCode(normalized);
+    setRouteTargetProductCode("");
+    setRouteStepsDraft(buildRouteStepsDraft(normalized));
+    setRouteMessage("");
+    setRouteError("");
+  }
+
+  function closeRouteEditor() {
+    setRouteEditorOpen(false);
+    setRouteSaving(false);
+    setRouteError("");
+  }
+
+  function updateRouteStep(index, field, value) {
+    setRouteStepsDraft((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  }
+
+  function addRouteStep() {
+    setRouteStepsDraft((prev) => [...prev, createEmptyRouteStep()]);
+  }
+
+  function removeRouteStep(index) {
+    setRouteStepsDraft((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length > 0 ? next : [createEmptyRouteStep()];
+    });
+  }
+
+  function normalizedRouteStepPayload() {
+    return routeStepsDraft
+      .map((row, index) => ({
+        process_code: String(row.process_code || "").trim().toUpperCase(),
+        dependency_type: normalizeDependencyType(row.dependency_type),
+        sequence_no: index + 1
+      }))
+      .filter((row) => row.process_code);
+  }
+
+  async function submitRouteEditor() {
+    setRouteMessage("");
+    setRouteError("");
+    setRouteSaving(true);
+    try {
+      const targetProductCode = String(routeTargetProductCode || "").trim().toUpperCase();
+      const sourceProductCode = String(routeSourceProductCode || "").trim().toUpperCase();
+      const steps = normalizedRouteStepPayload();
+      if ((routeEditorMode === ROUTE_EDITOR_CREATE || routeEditorMode === ROUTE_EDITOR_COPY) && !targetProductCode) {
+        throw new Error("请先填写目标产品编码。");
+      }
+      if ((routeEditorMode === ROUTE_EDITOR_EDIT || routeEditorMode === ROUTE_EDITOR_COPY) && !sourceProductCode) {
+        throw new Error("请先选择来源产品编码。");
+      }
+      if (steps.length === 0) {
+        throw new Error("至少需要配置一个工序步骤。");
+      }
+
+      if (routeEditorMode === ROUTE_EDITOR_CREATE) {
+        await postContract("/internal/v1/internal/masterdata/routes/create", {
+          product_code: targetProductCode,
+          steps
+        });
+      } else if (routeEditorMode === ROUTE_EDITOR_EDIT) {
+        await postContract("/internal/v1/internal/masterdata/routes/update", {
+          product_code: sourceProductCode,
+          steps
+        });
+      } else if (routeEditorMode === ROUTE_EDITOR_COPY) {
+        await postContract("/internal/v1/internal/masterdata/routes/copy", {
+          source_product_code: sourceProductCode,
+          target_product_code: targetProductCode,
+          steps
+        });
+      } else {
+        throw new Error("未知的工艺路线操作。");
+      }
+
+      await refreshMasterdata();
+      setRouteMessage("工艺路线已保存。");
+      setRouteEditorOpen(false);
+    } catch (error) {
+      setRouteError(error.message || "工艺路线保存失败");
+    } finally {
+      setRouteSaving(false);
+    }
+  }
+
+  async function deleteRoute(productCode) {
+    const normalized = String(productCode || "").trim().toUpperCase();
+    if (!normalized) {
+      return;
+    }
+    const confirmed = window.confirm(`确认删除产品 ${normalized} 的工艺路线吗？`);
+    if (!confirmed) {
+      return;
+    }
+    setRouteMessage("");
+    setRouteError("");
+    setRouteSaving(true);
+    try {
+      await postContract("/internal/v1/internal/masterdata/routes/delete", {
+        product_code: normalized
+      });
+      await refreshMasterdata();
+      setRouteMessage("工艺路线已删除。");
+    } catch (error) {
+      setRouteError(error.message || "删除失败");
+    } finally {
+      setRouteSaving(false);
+    }
+  }
+
   function updateProcessConfig(processCode, field, value) {
     setConfigData((prev) => ({
       ...prev,
@@ -604,6 +818,9 @@ export default function MasterdataPage() {
       {activeTab === ROUTE_TAB ? (
         <>
           <div className="toolbar">
+            <button disabled={routeSaving} onClick={openCreateRouteEditor}>
+              新增路线
+            </button>
             {processCodeFilter || productCodeFilter ? (
               <>
                 {processCodeFilter ? <span className="hint">当前按工序定位：{processCodeFilter}</span> : null}
@@ -621,6 +838,106 @@ export default function MasterdataPage() {
               </>
             ) : null}
           </div>
+          {routeMessage ? <p className="notice">{routeMessage}</p> : null}
+          {routeError ? <p className="error">{routeError}</p> : null}
+
+          {routeEditorOpen ? (
+            <div className="panel">
+              <div className="panel-head">
+                <h3>
+                  {routeEditorMode === ROUTE_EDITOR_CREATE
+                    ? "新增工艺路线"
+                    : routeEditorMode === ROUTE_EDITOR_EDIT
+                      ? "修改工艺路线"
+                      : "复制工艺路线"}
+                </h3>
+                <div className="toolbar">
+                  <button disabled={routeSaving} onClick={() => submitRouteEditor().catch(() => {})}>
+                    {routeSaving ? "保存中..." : "保存路线"}
+                  </button>
+                  <button disabled={routeSaving} onClick={closeRouteEditor}>
+                    取消
+                  </button>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <tbody>
+                    {routeEditorMode !== ROUTE_EDITOR_CREATE ? (
+                      <tr>
+                        <th>来源产品</th>
+                        <td>
+                          <input value={routeSourceProductCode} disabled />
+                        </td>
+                      </tr>
+                    ) : null}
+                    <tr>
+                      <th>目标产品</th>
+                      <td>
+                        <input
+                          value={routeTargetProductCode}
+                          disabled={routeEditorMode === ROUTE_EDITOR_EDIT}
+                          placeholder="例如 PROD_CATH_NEW"
+                          onChange={(e) => setRouteTargetProductCode(String(e.target.value || "").trim().toUpperCase())}
+                        />
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>顺序</th>
+                      <th>工序</th>
+                      <th>依赖类型</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {routeStepsDraft.map((row, index) => (
+                      <tr key={`route-step-${index}`}>
+                        <td>{index + 1}</td>
+                        <td>
+                          <select
+                            value={row.process_code || ""}
+                            onChange={(e) => updateRouteStep(index, "process_code", e.target.value)}
+                          >
+                            <option value="">请选择工序</option>
+                            {processOptions.map((option) => (
+                              <option key={option.code} value={option.code}>
+                                {option.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <select
+                            value={normalizeDependencyType(row.dependency_type)}
+                            onChange={(e) => updateRouteStep(index, "dependency_type", normalizeDependencyType(e.target.value))}
+                          >
+                            <option value="FS">FS（完成后开始）</option>
+                            <option value="SS">SS（开始后开始）</option>
+                          </select>
+                        </td>
+                        <td>
+                          <button disabled={routeSaving} onClick={() => removeRouteStep(index)}>
+                            删除步骤
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="toolbar">
+                <button disabled={routeSaving} onClick={addRouteStep}>
+                  新增步骤
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           {processDetails ? (
             <div className="panel">
@@ -686,12 +1003,14 @@ export default function MasterdataPage() {
                     <th>产品</th>
                     <th>工序</th>
                     <th>顺序</th>
+                    <th>依赖</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {groupedRouteRows.length === 0 ? (
                     <tr>
-                      <td colSpan={4}>暂无数据</td>
+                      <td colSpan={6}>暂无数据</td>
                     </tr>
                   ) : (
                     groupedRouteRows.map((row, rowIndex) => (
@@ -726,6 +1045,22 @@ export default function MasterdataPage() {
                           )}
                         </td>
                         <td>{row.sequence_no ?? "-"}</td>
+                        <td>{row.dependency_type_name_cn || row.dependency_type || "-"}</td>
+                        {row._routeProductRowSpan > 0 ? (
+                          <td rowSpan={row._routeProductRowSpan}>
+                            <div className="toolbar">
+                              <button disabled={routeSaving} onClick={() => openEditRouteEditor(row.product_code)}>
+                                修改
+                              </button>
+                              <button disabled={routeSaving} onClick={() => openCopyRouteEditor(row.product_code)}>
+                                复制
+                              </button>
+                              <button disabled={routeSaving} onClick={() => deleteRoute(row.product_code).catch(() => {})}>
+                                删除
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
                       </tr>
                     ))
                   )}

@@ -86,6 +86,31 @@ function ProductCell({ code, name }) {
   );
 }
 
+function normalizeProcessContexts(row) {
+  if (!row || !Array.isArray(row.process_contexts)) {
+    return [];
+  }
+  return row.process_contexts.map((item, index) => ({
+    id: `${row.order_no || "order"}-ctx-${index}`,
+    sequence_no: item.sequence_no ?? index + 1,
+    process_code: item.process_code || "-",
+    process_name_cn: item.process_name_cn || item.process_code || "-",
+    workshop_code: item.workshop_code || "-",
+    line_code: item.line_code || "-",
+    dependency_type: item.dependency_type || "-"
+  }));
+}
+
+function processContextSummary(row) {
+  const contexts = normalizeProcessContexts(row);
+  if (contexts.length > 0) {
+    return contexts
+      .map((item) => `${item.process_name_cn}(${item.workshop_code}/${item.line_code})`)
+      .join(" -> ");
+  }
+  return row?.process_route_summary || "-";
+}
+
 export default function OrdersPoolPage() {
   const [allRows, setAllRows] = useState([]);
   const [scheduledOrderNos, setScheduledOrderNos] = useState([]);
@@ -93,6 +118,7 @@ export default function OrdersPoolPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [expectedStartDraft, setExpectedStartDraft] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
   const orderNoFilter = (searchParams.get("order_no") || "").trim();
 
@@ -202,6 +228,44 @@ export default function OrdersPoolPage() {
 
   const selectedOrderIsScheduled = selectedOrder ? scheduledSet.has(String(selectedOrder.order_no || "")) : false;
   const selectedOrderInProgress = selectedOrder ? isInProgressStatus(selectedOrder.status) : false;
+  const selectedOrderProcessContexts = useMemo(() => normalizeProcessContexts(selectedOrder), [selectedOrder]);
+
+  useEffect(() => {
+    if (!selectedOrder) {
+      setExpectedStartDraft("");
+      return;
+    }
+    const expectedStart = String(
+      selectedOrder.expected_start_date
+      || selectedOrder.expected_start_time
+      || ""
+    ).trim();
+    setExpectedStartDraft(expectedStart ? expectedStart.slice(0, 10) : "");
+  }, [selectedOrder]);
+
+  async function saveExpectedStartTime() {
+    if (!selectedOrder?.order_no) {
+      return;
+    }
+    if (!expectedStartDraft) {
+      setError("请先选择预计开始日期。");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setSubmitting(true);
+    try {
+      await postContract(`/internal/v1/internal/order-pool/${encodeURIComponent(selectedOrder.order_no)}/patch`, {
+        expected_start_date: expectedStartDraft
+      });
+      await refresh();
+      setNotice(`已更新预计开始时间：${selectedOrder.order_no} -> ${expectedStartDraft}`);
+    } catch (e) {
+      setError(e.message || "保存预计开始时间失败。");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <section>
@@ -251,6 +315,28 @@ export default function OrdersPoolPage() {
                   <td>{formatDateTime(selectedOrder.promised_due_date) ?? "-"}</td>
                 </tr>
                 <tr>
+                  <th>预计开始时间</th>
+                  <td>{formatDateTime(selectedOrder.expected_start_time) ?? "-"}</td>
+                  <th>预计完成时间</th>
+                  <td>{formatDateTime(selectedOrder.expected_finish_time) ?? "-"}</td>
+                </tr>
+                <tr>
+                  <th>调整预计开始</th>
+                  <td colSpan={3}>
+                    <div className="toolbar">
+                      <input
+                        type="date"
+                        value={expectedStartDraft}
+                        onChange={(e) => setExpectedStartDraft(e.target.value)}
+                        disabled={submitting}
+                      />
+                      <button disabled={submitting || !expectedStartDraft} onClick={() => saveExpectedStartTime().catch(() => {})}>
+                        保存并重算预计完成
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
                   <th>加急</th>
                   <td>{Number(selectedOrder.urgent_flag) === 1 ? "是" : "否"}</td>
                   <th>冻结</th>
@@ -294,6 +380,18 @@ export default function OrdersPoolPage() {
             ]}
             rows={selectedOrderReportings}
           />
+
+          <h3>工序-车间-产线对应</h3>
+          <SimpleTable
+            columns={[
+              { key: "sequence_no", title: "顺序" },
+              { key: "process_name_cn", title: "工序" },
+              { key: "workshop_code", title: "车间" },
+              { key: "line_code", title: "产线" },
+              { key: "dependency_type", title: "依赖" }
+            ]}
+            rows={selectedOrderProcessContexts}
+          />
         </div>
       ) : null}
       {orderNoFilter && !selectedOrder ? <p className="error">未找到该生产订单，请检查生产订单号。</p> : null}
@@ -318,6 +416,21 @@ export default function OrdersPoolPage() {
             render: (value, row) => <ProductCell code={value} name={row.product_name_cn || value} />
           },
           { key: "order_qty", title: "数量" },
+          {
+            key: "process_route_summary",
+            title: "工序/车间/产线",
+            render: (_, row) => processContextSummary(row)
+          },
+          {
+            key: "expected_start_time",
+            title: "预计开始",
+            render: (value) => formatDateTime(value) ?? "-"
+          },
+          {
+            key: "expected_finish_time",
+            title: "预计完成",
+            render: (value) => formatDateTime(value) ?? "-"
+          },
           { key: "promised_due_date", title: "承诺交期" },
           { key: "urgent_flag", title: "加急", render: (value) => (Number(value) === 1 ? "是" : "否") },
           { key: "lock_flag", title: "锁单", render: (value) => (Number(value) === 1 ? "是" : "否") },

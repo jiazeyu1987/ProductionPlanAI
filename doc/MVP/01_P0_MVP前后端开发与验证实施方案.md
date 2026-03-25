@@ -1,229 +1,146 @@
-# P0 MVP前后端开发与验证实施方案
+# P0 MVP前后端开发与验证实施方案（现状对齐版）
+
+> 版本：v2026-03-24  
+> 说明：本文件按当前代码实现对齐，不再使用“纯计划态”描述。
 
 ## 1. 文档目标
-1. 为小团队提供一份可直接执行的 P0 MVP 开发方案，覆盖前端、后端、测试、数据验证与排产结果验证。
-2. 在不引入复杂基础设施的前提下，完成 P0 闭环交付：`待排池 -> 调度台 -> 版本发布 -> 报工反馈 -> 重排 -> 预警处置`。
-3. 将“自动化排产是否符合预期”定义为可量化、可自动校验、可业务签字的验收流程。
+1. 给出当前 MVP 前后端“已实现能力”的统一说明。
+2. 标注已落地、部分落地、未落地项，避免口径歧义。
+3. 作为 `doc/MVP` 与代码联调、验收、交付的基准说明。
 
-## 2. 口径锁定（必须遵守）
-1. 班次口径：`1班次=12小时`，每日开班数为 `1` 或 `2`（日班+夜班）。
-2. P0 硬约束：人力、机器、物料齐套（缺一不可执行）。
-3. 生产对象：以 ERP 生产订单为排产主体；销售订单仅做来源与交付关联。
-4. 工艺规则：产品可拆分为多个工艺工序；工序依赖按现行 `FS/SS` 口径执行。
-5. P0 边界：不做库存精算优化；库存/物料细粒度优化归入 P1。
-6. MVP 架构：模块化单体（`api`内含排产引擎）+ PostgreSQL 任务表异步，不强依赖 MQ/独立 Worker。
-7. 冲突处理：本文件与其他文档冲突时，按 `doc/00_现行口径基线_2026-03-21.md` 与 `doc/develop` 现行规范优先。
+## 2. 对齐范围与冲突规则
+1. 代码对齐范围：
+   - 后端：`code/backend`
+   - 前端：`code/frontend`
+   - 脚本：`run_stack.ps1`、`code/scripts/*`
+   - CI：`.github/workflows/p0-quality-gate.yml`、`.github/workflows/backend-benchmark-gate.yml`
+2. 冲突处理：
+   - 本文与代码冲突时，以代码为准。
+   - 本文与其他文档冲突时，仍遵循 `doc/00_现行口径基线_2026-03-21.md` 的优先级规则。
 
-## 3. MVP技术方案（前后端）
+## 3. 当前后端实现（`code/backend`）
 
-### 3.1 后端实现基线
-1. 技术栈：`Java 21 + Spring Boot + PostgreSQL`。
-2. 模块边界：`integration/order/masterdata/resource/scheduler/dispatch/execution/alert/audit` 逻辑分层，同进程部署。
-3. 异步模型：`job_task` 表 + 定时调度执行器（排程、重排、同步补偿、预警计算）。
-4. 幂等与并发：写接口强制 `request_id`，关键写操作采用乐观锁（版本号）。
-5. 核心接口来源：`openapi/scheduling-v1.yaml` 与 `openapi/scheduling-internal-v1.yaml`。
+### 3.1 技术与运行
+1. 技术栈：`Java 21 + Spring Boot 3.4.x + JPA + Flyway + PostgreSQL/H2 + Apache POI + sqlite-jdbc`。
+2. 默认 profile：`local`（H2，`application-local.yml`）。
+3. PostgreSQL 模式可用（`application.yml` + `code/scripts/run_backend_pg.ps1`）。
+4. 时区配置：`Asia/Shanghai`。
 
-### 3.2 前端实现基线
-1. 技术栈：`React`（按现有项目约定）。
-2. 核心页面：`/dashboard`、`/orders/pool`、`/schedule/board`、`/reports/plans`、`/schedule/versions`、`/dispatch/commands`、`/execution/wip`、`/alerts`、`/audit/logs`、`/masterdata`、`/ops/integration`、`/simulation`（另含只读说明页 `/guide`）。
-3. 交互规则：写操作携带 `request_id`，高风险操作走审批，关键操作支持影响预览。
-4. MVP原则：优先交付单页作战链路与高频操作，低频管理能力同批次补齐。
+### 3.2 路由分层
+1. 外部契约：`/v1/*`（ERP/MES/报表/回写）。
+2. 内部契约：`/internal/v1/internal/*`（待排池、版本、指令审批、预警、仿真、审计、同步监控）。
+3. 兼容路由：`/api/*`（历史 MVP 调用路径仍保留）。
 
-### 3.3 建议代码目录（示例）
-```text
-backend/
-  src/main/java/.../module/{controller,service,repository,domain}
-  src/main/java/.../scheduler/{solver,validator,explainer}
-  src/main/java/.../job/{dispatcher,runner,retry}
-  src/test/java/.../{unit,integration,e2e}
-frontend/
-  src/pages/{dashboard,orders,schedule,dispatch,execution,alerts,audit,masterdata,ops}
-  src/components/{table,filter,drawer,gantt,approval}
-  src/services/{api,query,command}
-  src/tests/{unit,integration,e2e}
-```
+### 3.3 排程核心（当前代码行为）
+1. `generateSchedule` 已支持 `base_version_no` 作为输入，并将锁单订单作为“保留基线”处理。
+2. 锁单保留不依赖 `autoReplan=true`，当前逻辑统一保留锁单语义。
+3. 未排任务已输出结构化原因（含 `reason_code` / `dependency_status` / `task_status` 等）。
+4. 原因码包含：`CAPACITY_MANPOWER`、`CAPACITY_MACHINE`、`CAPACITY_UNKNOWN`、`MATERIAL_SHORTAGE`、`DEPENDENCY_BLOCKED`、`FROZEN_BY_POLICY`、`LOCKED_PRESERVED`。
+5. 发布/回滚支持幂等（`request_id + action` 账本）。
 
-## 4. 前后端代码编写计划（P0）
+### 3.4 数据与配置能力
+1. 内置主数据在线配置：
+   - `GET /internal/v1/internal/masterdata/config`
+   - `POST /internal/v1/internal/masterdata/config`
+2. 调度负荷视图接口：
+   - `GET /internal/v1/internal/schedule-versions/{versionNo}/daily-process-load`
+   - `GET /internal/v1/internal/schedule-versions/{versionNo}/shift-process-load`
+3. 算法解释接口：
+   - `GET /internal/v1/internal/schedule-versions/{versionNo}/algorithm`
+4. ERP 真实订单读取：
+   - 按 `mvp.erp.sqlite-path` 读取 SQLite 订单；
+   - 读取失败时回退到内置种子数据。
 
-### 4.1 后端任务拆解
-| 迭代 | 目标 | 主要编码内容 | 完成标准 |
-|---|---|---|---|
-| I1 | 主链路打通 | 订单入池、主数据读写、排程任务创建、版本草稿保存 | 可生成草稿版本并可查询 |
-| I2 | 自动排产可用 | 人机料校验、班次产能计算、工序依赖排程、冲突检测、不可排原因输出 | 产出工序级任务，硬约束零违规 |
-| I3 | 发布与执行闭环 | 版本发布、ERP回写、MES报工消费、WIP更新、重排触发 | 发布后可追踪执行进度并触发重排 |
-| I4 | 治理与稳态 | 审批、审计、告警、任务重试补偿、失败回滚 | 全链路可追溯，失败可补偿 |
+### 3.5 安全与协议
+1. 契约路由（`/v1`、`/internal/v1`）要求 `Authorization: Bearer ...`。
+2. 写接口要求 `request_id`（Header/Body/Query 解析）。
+3. 响应统一回传 `x-request-id`。
+4. CORS 默认放行 `http://localhost:5932`。
 
-### 4.2 前端任务拆解
-| 迭代 | 目标 | 主要编码内容 | 完成标准 |
-|---|---|---|---|
-| I1 | 调度驾驶舱可用 | Dashboard 指标卡、今日必须处理、下钻明细 | 可从看板下钻到待排/调度明细 |
-| I2 | 调度核心可用 | 待排池筛选与批量操作、调度台甘特/列表、影响预览 | 调度员可完成日常排产与调整 |
-| I3 | 发布执行闭环 | 版本中心发布/回滚、报工与WIP、预警中心 | 计划发布后可追踪异常并处置 |
-| I4 | 管理与追溯 | 审计页、主数据页、同步监控页、权限控制 | 管理员可追溯与维护系统配置 |
+## 4. 当前前端实现（`code/frontend`）
 
-### 4.3 联调顺序（前后端）
-1. 主数据与订单查询接口先联调，确保待排池可展示。
-2. 再联调排程请求与版本结果接口，保证调度台可渲染。
-3. 再联调发布、回写、报工、重排链路，形成业务闭环。
-4. 最后联调审批、审计、预警、同步监控，形成可上线治理能力。
+### 4.1 已实现路由
+1. `/dashboard`
+2. `/orders/pool`
+3. `/schedule/board`
+4. `/reports/plans`
+5. `/schedule/versions`
+6. `/dispatch/commands`
+7. `/execution/wip`
+8. `/alerts`
+9. `/audit/logs`
+10. `/masterdata`
+11. `/ops/integration`
+12. `/simulation`
+13. `/guide`
 
-### 4.4 MVP范围裁剪（防止过度建设）
-1. P0必做：自动排产硬约束、版本发布、报工反馈、重排触发、审计追溯、关键页面闭环。
-2. P0建议：产能预聚合、可解释原因标准化、关键链路E2E自动化、数据质量日报。
-3. P1后置：两阶段优化求解、独立Worker/MQ、热冷分层、复杂仿真与策略实验。
+### 4.2 关键页面对齐点
+1. 调度台（`/schedule/board`）已接入：
+   - 草稿生成与发布；
+   - 版本任务明细；
+   - 每天工序负荷；
+   - 分配解释（瓶颈原因/维度/说明）。
+2. 版本中心（`/schedule/versions`）已接入：
+   - 差异对比；
+   - 发布/回滚；
+   - 算法解释与未排原因摘要。
+3. 主数据页（`/masterdata`）已接入可编辑参数并落地保存到后端配置接口。
+4. 报表页（`/reports/plans`）已接入版本选择、导出、周/月共享字段一致性检查。
+5. 仿真页（`/simulation`）当前默认仅开放“手动模拟”入口；批量仿真入口保留代码但 UI 开关关闭。
 
-## 5. 测试计划（P0 MVP）
+## 5. 运行与联调入口
+1. 仓库根一键启动：`.\run_stack.ps1` / `.\run_stack.bat`
+2. 代码目录脚本：
+   - `code/scripts/run_backend_local.ps1`
+   - `code/scripts/run_backend_pg.ps1`
+   - `code/scripts/run_frontend.ps1`
+   - `code/scripts/run_stack.ps1`
+3. 默认地址：
+   - Frontend：`http://localhost:5932`
+   - Backend：`http://localhost:5931`
 
-### 5.1 测试分层
-1. 单元测试：规则计算、状态机迁移、幂等与并发逻辑。
-2. 集成测试：数据库事务、任务重试、ERP/MES 入站出站、接口鉴权。
-3. 端到端测试：`待排池 -> 调度台 -> 版本发布 -> 报工反馈 -> 重排 -> 预警处置`。
-4. 性能测试：排程耗时、接口响应、批量操作与分页稳定性。
+## 6. 测试与质量门禁（现状）
 
-### 5.2 P0关键用例矩阵
-| 用例ID | 场景 | 预期结果 |
-|---|---|---|
-| MVP-TC-001 | 正常订单自动排产 | 生成可执行计划，版本可发布 |
-| MVP-TC-002 | 冻结订单参与排产 | 被拦截，不进入自动排产 |
-| MVP-TC-003 | 锁单订单重排 | 锁单不被自动改动 |
-| MVP-TC-004 | 班次口径 1班/2班 | 产能计算符合班次数量变化 |
-| MVP-TC-005 | 设备冲突 | 不出现同设备同时间双占用 |
-| MVP-TC-006 | 员工技能不足 | 任务不可排并给出原因 |
-| MVP-TC-007 | 物料缺失 | 标记不可执行并进入异常队列 |
-| MVP-TC-008 | 订单减量（300->200） | 支持手动调整并重算受影响任务 |
-| MVP-TC-009 | 在制初始化切换 | 可导入进度并续排未完成工序 |
-| MVP-TC-010 | 发布回写失败重试 | 可重试补偿，审计链路完整 |
-| MVP-TC-011 | 报工偏差触发重排 | 达阈值自动生成重排候选版本 |
-| MVP-TC-012 | 权限与审批 | 高风险操作无审批不可生效 |
+### 6.1 后端测试
+1. `code/backend/src/test/java/com/autoproduction/mvp/MvpApiTest.java`：
+   - 覆盖外部/内部契约主要路径；
+   - 覆盖周/月报表导出与金标准模板结构对齐校验；
+   - 覆盖重排、指令审批、仿真关键链路。
+2. `code/backend/src/test/java/com/autoproduction/mvp/core/SchedulerBenchmarkSmokeTest.java`：
+   - 支持 100/1000/5000 单规模基准；
+   - 支持阈值参数化（`-Dmvp.benchmark.thresholds=...`）。
 
-### 5.3 测试准入与准出
-1. 准入：接口契约冻结、测试数据包齐备、环境部署完成。
-2. 准出：P0关键用例通过率 100%，阻断级缺陷为 0。
-3. 性能目标：单次排产计算 `P95 <= 5 分钟`。
-4. 证据留存：测试报告、日志、截图、审计记录、UAT签署单。
+### 6.2 前端测试
+1. `code/frontend/src/App.test.jsx`：路由壳与导航基础校验。
+2. `code/frontend/src/pages/SimulationPage.test.jsx`：手动模拟接口调用与批量入口隐藏校验。
 
-### 5.4 自动化执行入口与工件映射
-1. 质量门禁入口：`scripts/run_quality_gate.ps1`（本地）与 `.github/workflows/p0-quality-gate.yml`（CI）。
-2. 工件检查脚本：`scripts/check_artifacts.py`（契约、数据包、文档工件一致性）。
-3. 测试数据包目录：`testdata/p0_baseline_pack/`、`testdata/p0_negative_pack/`、`testdata/p0_cutover_inprogress_pack/`。
-4. 验收签署模板：`doc/plan/templates/UAT签署单_P0.md`。
+### 6.3 CI 门禁
+1. 工件门禁：`.github/workflows/p0-quality-gate.yml`
+2. 后端性能门禁：`.github/workflows/backend-benchmark-gate.yml`
 
-### 5.5 与现行自动化用例映射
-1. 本文 `MVP-TC-001/002/003/011` 分别对应 `doc/develop/16_测试自动化与验收工件规范_P0.md` 中 `TC-001/002/003/007`。
-2. 本文 `MVP-TC-004/005/006/007` 对应现行规范中的 `TC-015/016` 及其约束扩展验证。
-3. 本文 `MVP-TC-009` 对应在制切换场景，执行口径以 `doc/develop/12_在制订单初始化切换SOP_P0.md` 为准。
-4. 用例ID不同不构成冲突，验收时以“场景覆盖一致 + 自动化证据可追溯”为判定标准。
+## 7. 本次与旧版文档的修正点
+1. 将“计划态任务拆解”改为“代码现状说明 + 落地状态”。
+2. 补充代码已实现但旧文档遗漏的接口：
+   - `daily-process-load`
+   - `shift-process-load`
+   - `algorithm`
+   - `masterdata/config`
+3. 修正仿真能力描述为“手动模拟默认启用，批量仿真入口关闭”。
+4. 补充后端基准测试与 benchmark workflow。
 
-## 6. 数据验证计划（P0 MVP）
+## 8. 待落地项（保持透明）
+1. 独立 worker/sync 进程未启用，当前仍为单体内实现。
+2. RabbitMQ 未启用（P1 规划项）。
+3. 批量仿真 UI 入口暂未开放（代码保留，待开关策略确认）。
 
-### 6.1 数据验证目标
-1. 确保外部提供数据（ERP/MES/业务表格）可用、可解释、可追溯。
-2. 确保入库后数据满足排产计算约束，不因脏数据导致错误排产。
-3. 确保每日增量同步后，关键口径与前一日保持连续性。
-
-### 6.2 验证流程
-1. 文件级校验：文件命名、编码、列完整性、主键唯一性。
-2. Schema校验：字段类型、枚举值、时间格式、必填性。
-3. 业务规则校验：班次时段合法、工艺路线无环、设备技能映射有效、员工在岗可用。
-4. 关联一致性校验：订单-产品-工艺-设备-员工-班次引用完整。
-5. 入库后对账：源数据条数与入库条数一致，失败记录可追踪与回放。
-6. 映射签字校验：字段与枚举映射必须与 `doc/plan/13_K3_MES字段映射签字版_P0.md` 一致。
-
-### 6.3 每日校验清单
-| 项目 | 校验项 | 失败处理 |
-|---|---|---|
-| 订单数据 | 状态可排、数量>0、交期合法 | 进入隔离表，通知业务修正 |
-| 工艺路线 | 工序顺序完整、依赖关系合法 | 阻断对应产品排产 |
-| 设备能力 | 设备可用状态、工艺匹配、班次产能>0 | 标记不可执行资源 |
-| 员工技能 | 员工-工艺技能存在、班次在岗可用 | 标记技能缺口 |
-| 班次日历 | `1班次=12小时`、开班标记合法 | 禁止发布新版本 |
-| 物料状态 | 齐套/缺料标识可用且时效有效 | 缺料任务进入异常队列 |
-
-### 6.4 校验产物
-1. `data_quality_report_YYYYMMDD.md`：总体通过率与阻断项。
-2. `invalid_records_YYYYMMDD.csv`：失败明细与原因。
-3. `reconcile_report_YYYYMMDD.md`：源与目标对账报告。
-4. `mapping_check_YYYYMMDD.md`：字段映射签字版一致性检查结果。
-
-## 7. 自动化排产符合预期验证方案
-
-### 7.1 “符合预期”定义
-1. 硬约束正确：人机料约束、工序依赖、班次约束、冻结/锁单规则无违规。
-2. 结果可解释：每个不可排任务必须给出结构化原因与定位信息。
-3. 业务可接受：相对人工基线，延期风险不恶化，关键资源利用率合理。
-4. 系统可复现：同输入同参数同版本，多次运行结果一致。
-
-### 7.2 验证数据集
-1. 使用 `testdata/p0_baseline_pack` 作为标准回归数据。
-2. 使用 `testdata/p0_negative_pack` 验证异常与阻断逻辑。
-3. 使用 `testdata/p0_cutover_inprogress_pack` 验证在制初始化与续排逻辑。
-4. 使用 `doc/模拟数据/` 作为业务沟通样例与联调补充样例。
-
-### 7.3 自动校验规则
-| 校验ID | 自动校验内容 | 通过标准 |
-|---|---|---|
-| MVP-AT-001 | 同设备同时间是否双占用 | 0 条冲突 |
-| MVP-AT-002 | 同员工同时间是否双占用 | 0 条冲突 |
-| MVP-AT-003 | 工序依赖是否违反 | 0 条违反 |
-| MVP-AT-004 | 冻结/锁单是否被自动改动 | 0 条违规 |
-| MVP-AT-005 | 班次边界是否越界 | 0 条越界 |
-| MVP-AT-006 | 缺料任务是否被标记可执行 | 0 条错误 |
-| MVP-AT-007 | 不可排任务是否有原因 | 覆盖率 100% |
-| MVP-AT-008 | 求解耗时是否达标 | `P95 <= 5分钟` |
-| MVP-AT-009 | 同输入重复求解一致性 | 一致率 100% |
-| MVP-AT-010 | 订单减量后增量重排范围 | 仅影响关联任务，不扩散全局 |
-
-### 7.4 业务验收步骤
-1. 业务确认当日开班数、关键设备、关键技能工配置。
-2. 运行自动排产，导出计划结果与不可排清单。
-3. 由调度经理逐条抽检关键订单与关键工艺。
-4. 对比人工计划基线，确认交期风险与资源瓶颈解释合理。
-5. 形成《自动排产验收记录》，业务、生产、IT 三方签字。
-
-## 8. 里程碑与交付物
-
-### 8.1 里程碑（建议4周）
-1. 第1周：I1完成（基础数据与草稿排程）。
-2. 第2周：I2完成（自动排产核心与前端调度台）。
-3. 第3周：I3完成（发布、执行反馈、重排闭环）。
-4. 第4周：I4完成（审计预警、全量测试、UAT与上线准备）。
-
-### 8.2 交付物清单
-1. 前后端可运行代码（MVP部署形态）。
-2. 接口实现与联调记录（外部 + 内部）。
-3. 测试报告与缺陷闭环记录。
-4. 数据验证报告与对账报告。
-5. 自动排产验证报告与业务签字结论。
-6. 发布检查清单、UAT签署单、回滚演练记录。
-
-## 9. P0上线准入条件
-1. P0关键测试用例全部通过。
-2. 数据验证阻断项为 0。
-3. 自动排产校验项全部通过，且业务验收签字完成。
-4. 生产演练完成：`1班`与`2班`场景均通过。
-5. 可追溯能力可用：`request_id` 可串联前后端、接口、审计与告警。
+## 9. 当前验收基线（MVP）
+1. 关键链路可闭环：待排池 -> 调度台 -> 版本发布 -> 报工 -> 预警/重排。
+2. 周/月计划接口与导出可用，模板结构与金标准一致。
+3. 排产输出具备可解释性字段（任务状态、依赖状态、未排原因）。
+4. 请求链路可追踪：`request_id` 在前后端与接口响应中贯通。
 
 ## 10. 关联文档
-1. `doc/develop/06_架构与模块设计文档.md`
-2. `doc/develop/07_排产引擎详细设计文档.md`
-3. `doc/develop/19_前端页面与交互规格_P0.md`
-4. `doc/develop/20_内部接口与事件契约_P0.md`
-5. `doc/develop/16_测试自动化与验收工件规范_P0.md`
-6. `doc/plan/12_业务部门外部数据提供规范_P0.md`
-7. `doc/develop/12_在制订单初始化切换SOP_P0.md`
-
-## 11. 中文数据口径（新增强制项）
-1. 编码类字段（产品、工序、动作、路线、状态、场景、事件类型）必须在后端返回时提供中文字段，命名统一为 `*_name_cn` 或 `*_cn`。
-2. 前端不得对上述编码字段做本地映射兜底；若后端缺失中文字段，视为后端/数据问题，不允许在前端绕过。
-3. 数据库必须维护中文数据来源：
-   - 字典表：`mvp_dict_cn(dict_type, dict_code, dict_name_cn)`；
-   - 种子数据需覆盖 P0 使用的产品、工序、动作、路线、场景。
-4. 仿真数据强制中文化：
-   - 仿真事件需包含 `event_type_name_cn` 与中文 `message/message_cn`；
-   - 仿真状态需包含 `scenario_name_cn`；
-   - 仿真订单需包含 `product_name_cn`、相关工序中文名字段。
-5. 验收新增检查项：
-   - `/v1/mes/process-routes` 返回 `route_name_cn/product_name_cn/process_name_cn`；
-   - `/internal/v1/internal/audit-logs` 返回 `action_name_cn`；
-   - `/internal/v1/internal/simulation/state` 返回 `scenario_name_cn`；
-   - 前端页面不出现 `PROD_* / PROC_* / ROUTE-* / *_SCHEDULE` 等编码值直出。
+1. `doc/MVP/02_金标准报表数据层对齐_周计划与月计划.md`
+2. `doc/MVP/refactor/01_锁单基线与冻结语义重构方案.md`
+3. `doc/MVP/refactor/02_排程引擎可解释性与约束建模重构方案.md`
+4. `doc/MVP/refactor/03_性能可观测性与测试体系重构方案.md`

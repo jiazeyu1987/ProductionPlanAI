@@ -54,6 +54,7 @@ final class SeedDataFactory {
     state.orders = new ArrayList<>();
     state.orders.add(new MvpDomain.Order(
       "MO-CATH-001", "production", LocalDate.of(2026, 3, 24),
+      state.startDate,
       true, false, false, "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_CATH", 300d, 0d)),
       createBusinessData(
@@ -74,6 +75,7 @@ final class SeedDataFactory {
     ));
     state.orders.add(new MvpDomain.Order(
       "MO-BALLOON-001", "production", LocalDate.of(2026, 3, 25),
+      state.startDate,
       false, false, false, "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_BALLOON", 1000d, 0d)),
       createBusinessData(
@@ -94,6 +96,7 @@ final class SeedDataFactory {
     ));
     state.orders.add(new MvpDomain.Order(
       "MO-STENT-001", "production", LocalDate.of(2026, 3, 26),
+      state.startDate,
       false, false, false, "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_STENT", 2000d, 0d)),
       createBusinessData(

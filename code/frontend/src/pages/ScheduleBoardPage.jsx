@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import SimpleTable from "../components/SimpleTable";
 import { loadList, postContract, postLegacy } from "../services/api";
@@ -12,7 +12,7 @@ const REASON_TEXT = {
   DEPENDENCY_BLOCKED: "前序工序未释放",
   FROZEN_BY_POLICY: "订单冻结策略",
   LOCKED_PRESERVED: "锁单保留基线",
-  UNKNOWN: "未标记原因"
+  UNKNOWN: "未识别原因"
 };
 
 const DIMENSION_TEXT = {
@@ -218,13 +218,13 @@ function buildOrderAllocationRows(schedule, orderItems, taskItems = []) {
           : (totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0);
       const qtyShareRaw = totalScheduledQty > 1e-9 ? (item.scheduled_qty / totalScheduledQty) * 100 : 0;
 
-      let explain = `按“加急优先、交期优先、订单号稳定排序”规则，${priorityLabel} 交期 ${dueDate} 获得了当前草稿资源分配。`;
+      let explain = `按当前策略，${priorityLabel}（交期 ${dueDate}）在本版草稿中获得了对应资源分配。`;
       if (item.scheduled_qty <= 1e-9 && item.unscheduled_qty > 1e-9) {
-        explain += ` 当前未分配到可执行资源，主要瓶颈是“${reasonToText(topReasonCode)}，${dimensionToText(topDimension)}”。`;
+        explain += ` 当前未分配到可执行资源，主要瓶颈是“${reasonToText(topReasonCode)} / ${dimensionToText(topDimension)}”。`;
       } else if (item.unscheduled_qty > 1e-9) {
         explain +=
-          ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}；` +
-          `仍有 ${formatQty(item.unscheduled_qty)} 未排，主要瓶颈是“${reasonToText(topReasonCode)}，${dimensionToText(topDimension)}”。`;
+          ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}，` +
+          `仍有 ${formatQty(item.unscheduled_qty)} 未排，主要瓶颈是“${reasonToText(topReasonCode)} / ${dimensionToText(topDimension)}”。`;
       } else {
         explain +=
           ` 已分配 ${formatQty(item.scheduled_qty)}，资源占比 ${formatPercent(resourceShareRaw)}，` +
@@ -258,9 +258,26 @@ function buildOrderAllocationRows(schedule, orderItems, taskItems = []) {
     });
 }
 
+const STRATEGY_OPTIONS = [
+  { code: "KEY_ORDER_FIRST", label: "关键订单优先" },
+  { code: "MAX_CAPACITY_FIRST", label: "最大产能优先" },
+  { code: "MIN_DELAY_FIRST", label: "交期最小延期优先" }
+];
+
+function normalizeStrategyCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  return STRATEGY_OPTIONS.some((item) => item.code === raw) ? raw : "KEY_ORDER_FIRST";
+}
+
+function strategyLabel(value) {
+  const code = normalizeStrategyCode(value);
+  return STRATEGY_OPTIONS.find((item) => item.code === code)?.label || code;
+}
+
 export default function ScheduleBoardPage() {
   const [versions, setVersions] = useState([]);
   const [selected, setSelected] = useState("");
+  const [strategyCode, setStrategyCode] = useState("KEY_ORDER_FIRST");
   const [tasks, setTasks] = useState([]);
   const [orderAllocationRows, setOrderAllocationRows] = useState([]);
   const [dailyProcessLoadRows, setDailyProcessLoadRows] = useState([]);
@@ -341,6 +358,13 @@ export default function ScheduleBoardPage() {
       }
       setTasks(tasksRes.items ?? []);
       setAlgorithmDetail(algorithmRes);
+      setStrategyCode(
+        normalizeStrategyCode(
+          algorithmRes?.strategy_code ||
+            algorithmRes?.metadata?.schedule_strategy_code ||
+            algorithmRes?.metadata?.scheduleStrategyCode
+        )
+      );
       const scheduleItems = schedulesRes.items ?? [];
       const selectedSchedule = scheduleItems.find((item) => normalizeVersionNo(item) === versionNo);
       setOrderAllocationRows(buildOrderAllocationRows(selectedSchedule, orderPoolRes.items ?? [], tasksRes.items ?? []));
@@ -354,12 +378,14 @@ export default function ScheduleBoardPage() {
 
   async function generate() {
     setMessage("");
+    const nextStrategyCode = normalizeStrategyCode(strategyCode);
     const schedule = await postLegacy("/api/schedules/generate", {
       base_version_no: selected || null,
-      autoReplan: false
+      autoReplan: false,
+      strategy_code: nextStrategyCode
     });
     const versionNo = String(schedule.version_no || schedule.versionNo || "");
-    setMessage(`生成完成：${versionNo || "-"}`);
+    setMessage(`生成完成：${versionNo || "-"}（${strategyLabel(nextStrategyCode)}）`);
     await loadVersions();
     if (versionNo) {
       setSelected(versionNo);
@@ -382,7 +408,7 @@ export default function ScheduleBoardPage() {
         operator: "publisher01",
         reason: "调度台发布草稿"
       });
-      setMessage(`已发布版本：${selected}`);
+      setMessage(`宸插彂甯冪増鏈細${selected}`);
       await loadVersions();
       await loadVersionDetail(selected);
     } catch (e) {
@@ -404,18 +430,28 @@ export default function ScheduleBoardPage() {
     <section>
       <h2>调度台</h2>
       <div className="toolbar">
-        <button onClick={() => generate().catch((e) => setMessage(e.message))}>生成草稿版本</button>
+        <label>
+          策略
+          <select value={strategyCode} onChange={(e) => setStrategyCode(normalizeStrategyCode(e.target.value))}>
+            {STRATEGY_OPTIONS.map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button onClick={() => generate().catch((e) => setMessage(e.message))}>鐢熸垚鑽夌鐗堟湰</button>
         <button
           disabled={!selected || !canPublishSelected || publishing}
           onClick={() => publishSelectedDraft().catch((e) => setMessage(e.message))}
         >
-          {publishing ? "发布中..." : "发布草稿"}
+          {publishing ? "鍙戝竷涓?.." : "鍙戝竷鑽夌"}
         </button>
         <select value={selected} onChange={(e) => setSelected(e.target.value)}>
-          <option value="">请选择版本</option>
+          <option value="">璇烽€夋嫨鐗堟湰</option>
           {versions.map((item) => (
             <option key={normalizeVersionNo(item)} value={normalizeVersionNo(item)}>
-              {normalizeVersionNo(item)} / {item.status_name_cn || item.status || "-"}
+              {normalizeVersionNo(item)} / {item.status_name_cn || item.status || "-"} / {item.strategy_name_cn || strategyLabel(item.strategy_code)}
             </option>
           ))}
         </select>
@@ -423,36 +459,34 @@ export default function ScheduleBoardPage() {
 
       {message ? <p className="notice">{message}</p> : null}
       <p className="hint">
-        订单列展示的是生产订单号。一个订单会被拆成多行任务，不同工序/日期/班次，所以会重复出现，这是正常现象。
-      </p>
+        璁㈠崟鍒楀睍绀虹殑鏄敓浜ц鍗曞彿銆備竴涓鍗曚細琚媶鎴愬琛屼换鍔★紝涓嶅悓宸ュ簭/鏃ユ湡/鐝锛屾墍浠ヤ細閲嶅鍑虹幇锛岃繖鏄甯哥幇璞°€?      </p>
       <p className="hint">
-        下面“资源占比”按当前草稿中的人力+设备用量估算；如果该单没有资源用量数据，回退为计划量占比。
-      </p>
+        涓嬮潰鈥滆祫婧愬崰姣斺€濇寜褰撳墠鑽夌涓殑浜哄姏+璁惧鐢ㄩ噺浼扮畻锛涘鏋滆鍗曟病鏈夎祫婧愮敤閲忔暟鎹紝鍥為€€涓鸿鍒掗噺鍗犳瘮銆?      </p>
 
       {boardSummary ? (
         <div className="card-grid">
           <article className="metric-card">
-            <span>参与分配订单</span>
+            <span>鍙備笌鍒嗛厤璁㈠崟</span>
             <strong>{boardSummary.orderCount}</strong>
           </article>
           <article className="metric-card">
-            <span>已分配总量</span>
+            <span>宸插垎閰嶆€婚噺</span>
             <strong>{formatQty(boardSummary.totalScheduledQty)}</strong>
           </article>
           <article className="metric-card">
-            <span>未排总量</span>
+            <span>鏈帓鎬婚噺</span>
             <strong>{formatQty(boardSummary.totalUnscheduledQty)}</strong>
           </article>
           <article className="metric-card">
-            <span>首要瓶颈</span>
+            <span>棣栬鐡堕</span>
             <strong>{reasonToText(boardSummary.topReasonCode)}</strong>
           </article>
         </div>
       ) : null}
 
       <div className="panel">
-        <h3>分配列表</h3>
-        {detailLoading ? <p className="hint">正在切换草稿并刷新分配解释...</p> : null}
+        <h3>鍒嗛厤鍒楄〃</h3>
+        {detailLoading ? <p className="hint">姝ｅ湪鍒囨崲鑽夌骞跺埛鏂板垎閰嶈В閲?..</p> : null}
         {algorithmDetail ? (
           <p className="hint">
             版本 {algorithmDetail.version_no || selected || "-"}：任务{" "}
@@ -461,11 +495,14 @@ export default function ScheduleBoardPage() {
             {formatPercent(algorithmDetail?.summary?.schedule_completion_rate)}。
           </p>
         ) : null}
+        {algorithmDetail ? (
+          <p className="hint">当前策略：{strategyLabel(algorithmDetail.strategy_code || strategyCode)}</p>
+        ) : null}
         <SimpleTable
           columns={[
             {
               key: "order_no",
-              title: "订单",
+              title: "璁㈠崟",
               render: (value) =>
                 value ? (
                   <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
@@ -476,13 +513,13 @@ export default function ScheduleBoardPage() {
                 )
             },
             { key: "priority_label", title: "优先级" },
-            { key: "lock_label", title: "是否锁单" },
-            { key: "scheduled_qty", title: "已分配量", render: (value) => formatQty(value) },
-            { key: "resource_share", title: "资源占比", render: (value) => formatPercent(value) },
+            { key: "lock_label", title: "鏄惁閿佸崟" },
+            { key: "scheduled_qty", title: "宸插垎閰嶉噺", render: (value) => formatQty(value) },
+            { key: "resource_share", title: "璧勬簮鍗犳瘮", render: (value) => formatPercent(value) },
             { key: "qty_share", title: "计划量占比", render: (value) => formatPercent(value) },
             { key: "unscheduled_qty", title: "未排量", render: (value) => formatQty(value) },
-            { key: "bottleneck_reason_text", title: "主要瓶颈" },
-            { key: "bottleneck_dimension_text", title: "瓶颈维度" },
+            { key: "bottleneck_reason_text", title: "涓昏鐡堕" },
+            { key: "bottleneck_dimension_text", title: "鐡堕缁村害" },
             {
               key: "explain_cn",
               title: "为什么这么分配",
@@ -494,13 +531,13 @@ export default function ScheduleBoardPage() {
       </div>
 
       <div className="panel">
-        <h3>任务明细</h3>
+        <h3>浠诲姟鏄庣粏</h3>
         <p className="hint">受影响任务：{tasks.length} 条。</p>
         <SimpleTable
           columns={[
             {
               key: "order_no",
-              title: "订单",
+              title: "璁㈠崟",
               render: (value) =>
                 value ? (
                   <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
@@ -512,7 +549,7 @@ export default function ScheduleBoardPage() {
             },
             {
               key: "process_code",
-              title: "工序",
+              title: "宸ュ簭",
               render: (value, row) => {
                 const processCode = value || "";
                 const processName = row.process_name_cn || processCode || "-";
@@ -526,10 +563,10 @@ export default function ScheduleBoardPage() {
                 );
               }
             },
-            { key: "calendar_date", title: "日期" },
+            { key: "calendar_date", title: "鏃ユ湡" },
             {
               key: "shift_code",
-              title: "班次",
+              title: "鐝",
               render: (value, row) => row.shift_name_cn || value || "-"
             },
             { key: "plan_qty", title: "计划量", render: (value) => formatQty(value) }
@@ -540,15 +577,15 @@ export default function ScheduleBoardPage() {
 
       <div className="panel">
         <h3>每天工序工作量与最大产能</h3>
-        <p className="hint">按 日期 × 工序 展示当天已安排量、当天最大产能与负荷率。</p>
+        <p className="hint">按“日期 × 工序”展示当日已安排量、最大产能和负荷率。</p>
         <SimpleTable
           columns={[
-            { key: "calendar_date", title: "日期" },
-            { key: "process_name_cn", title: "工序" },
-            { key: "scheduled_qty", title: "已安排量", render: (value) => formatQty(value) },
+            { key: "calendar_date", title: "鏃ユ湡" },
+            { key: "process_name_cn", title: "宸ュ簭" },
+            { key: "scheduled_qty", title: "宸插畨鎺掗噺", render: (value) => formatQty(value) },
             { key: "max_capacity_qty", title: "最大产能", render: (value) => formatQty(value) },
             { key: "load_rate", title: "负荷率", render: (value) => formatPercent(value) },
-            { key: "open_shift_count", title: "开放班次数", render: (value) => formatQty(value) }
+            { key: "open_shift_count", title: "寮€鏀剧彮娆℃暟", render: (value) => formatQty(value) }
           ]}
           rows={dailyProcessLoadRows}
         />
@@ -556,3 +593,4 @@ export default function ScheduleBoardPage() {
     </section>
   );
 }
+

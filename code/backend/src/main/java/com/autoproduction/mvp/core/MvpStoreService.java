@@ -40,8 +40,16 @@ public class MvpStoreService {
   private static final long DEFAULT_SIM_SEED = 20260322L;
   private static final int DEFAULT_SIM_DAILY_SALES = 20;
   private static final String DEFAULT_SIM_SCENARIO = "STABLE";
+  private static final String STRATEGY_KEY_ORDER_FIRST = "KEY_ORDER_FIRST";
+  private static final String STRATEGY_MAX_CAPACITY_FIRST = "MAX_CAPACITY_FIRST";
+  private static final String STRATEGY_MIN_DELAY_FIRST = "MIN_DELAY_FIRST";
   private static final String LIVE_REPORT_VERSION_NO = "LIVE_STATE";
   private static final String LIVE_REPORT_STATUS = "LIVE";
+  private static final Map<String, String> SCHEDULE_STRATEGY_NAME_CN = Map.ofEntries(
+    Map.entry(STRATEGY_KEY_ORDER_FIRST, "关键订单优先"),
+    Map.entry(STRATEGY_MAX_CAPACITY_FIRST, "最大产能优先"),
+    Map.entry(STRATEGY_MIN_DELAY_FIRST, "交期最小延期优先")
+  );
   private static final Map<String, Integer> BASE_WORKERS_BY_PROCESS = Map.of(
     "PROC_TUBE", 8,
     "PROC_ASSEMBLY", 10,
@@ -368,6 +376,13 @@ public class MvpStoreService {
 
       phaseStart = System.nanoTime();
       boolean autoReplan = bool(options, "autoReplan", false);
+      String strategyCode = normalizeScheduleStrategy(
+        string(
+          options,
+          "strategy_code",
+          string(options, "schedule_strategy", string(options, "strategy", null))
+        )
+      );
       String baseVersionNo = string(options, "base_version_no", null);
       MvpDomain.ScheduleVersion baseVersion = null;
       if (baseVersionNo != null && !baseVersionNo.isBlank()) {
@@ -392,7 +407,8 @@ public class MvpStoreService {
         requestId,
         versionNo,
         baseVersion,
-        new HashSet<>(lockedOrders)
+        new HashSet<>(lockedOrders),
+        strategyCode
       );
       phaseDurationMs.put("engine_generate", elapsedMillis(phaseStart));
 
@@ -407,6 +423,8 @@ public class MvpStoreService {
       schedule.metadata.put("excludedLockedOrders", List.of());
       schedule.metadata.put("preservedLockedOrders", lockedOrders);
       schedule.metadata.put("baseVersionResolved", baseVersion != null);
+      schedule.metadata.put("schedule_strategy_code", strategyCode);
+      schedule.metadata.put("schedule_strategy_name_cn", scheduleStrategyNameCn(strategyCode));
       schedule.metadata.put("schedule_generate_phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
 
       long candidateOrderCount = orders.stream().map(order -> order.orderNo).filter(Objects::nonNull).distinct().count();
@@ -427,6 +445,8 @@ public class MvpStoreService {
       perfContext.put("phase", "schedule_generate");
       perfContext.put("duration_ms", totalDurationMs);
       perfContext.put("phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
+      perfContext.put("strategy_code", strategyCode);
+      perfContext.put("strategy_name_cn", scheduleStrategyNameCn(strategyCode));
       appendAudit(
         "SCHEDULE_VERSION",
         schedule.versionNo,
@@ -1002,6 +1022,7 @@ public class MvpStoreService {
           productionOrderNo,
           "production",
           dueDate,
+          businessDate,
           urgent,
           false,
           false,
@@ -1325,6 +1346,11 @@ public class MvpStoreService {
           row.put("status", version.status);
           row.put("based_on_version", version.basedOnVersion);
           row.put("rule_version_no", version.ruleVersionNo);
+          String strategyCode = normalizeScheduleStrategy(
+            firstString(version.metadata, "schedule_strategy_code", "scheduleStrategyCode", "strategy_code", "strategyCode")
+          );
+          row.put("strategy_code", strategyCode);
+          row.put("strategy_name_cn", scheduleStrategyNameCn(strategyCode));
           row.put("publish_time", version.publishTime == null ? null : version.publishTime.toString());
           row.put("created_by", version.createdBy);
           row.put("created_at", version.createdAt == null ? null : version.createdAt.toString());
@@ -1740,6 +1766,16 @@ public class MvpStoreService {
     synchronized (lock) {
       MvpDomain.ScheduleVersion schedule = getScheduleEntity(versionNo);
       Map<String, Object> observabilityMetrics = buildScheduleObservabilityMetrics(schedule, null, null);
+      String strategyCode = normalizeScheduleStrategy(
+        firstString(
+          schedule.metadata,
+          "schedule_strategy_code",
+          "scheduleStrategyCode",
+          "strategy_code",
+          "strategyCode"
+        )
+      );
+      String strategyNameCn = scheduleStrategyNameCn(strategyCode);
 
       Map<String, Object> summary = new LinkedHashMap<>();
       summary.put("task_count", schedule.tasks.size());
@@ -1773,7 +1809,10 @@ public class MvpStoreService {
       summary.put("api_error_rate", number(observabilityMetrics, "api_error_rate", 0d));
 
       List<String> logic = new ArrayList<>();
-      logic.add("Order priority: urgent first, then due date, then order number.");
+      logic.add("Current strategy: " + strategyNameCn + " (" + strategyCode + ").");
+      logic.add("Dispatch objective uses weighted scoring: urgent guarantee + due-date risk + WIP reduction + changeover penalty.");
+      logic.add("Urgent policy reserves a minimum process share and daily output floor before regular orders are fully expanded.");
+      logic.add("Locked baseline is preserved by default, but can be partially released when urgent protection must be satisfied.");
       if (schedule.metadata.containsKey("hardConstraints")) {
         logic.add("Hard constraints: " + schedule.metadata.get("hardConstraints"));
       } else {
@@ -1784,14 +1823,32 @@ public class MvpStoreService {
       } else {
         logic.add("Dependency rules: FS/SS.");
       }
-      logic.add("Allocation is created only when dependency, resource, and material are all feasible in current shift.");
-      logic.add("Unscheduled tasks keep reason codes, for example CAPACITY_MANPOWER/FROZEN_BY_POLICY/LOCKED_PRESERVED.");
+      logic.add("Transfer rules include minimum transfer batch, minimum lot size, and sterilization lag surrogate.");
+      logic.add("Capacity is adjusted by shift efficiency and changeover/product-mix penalties.");
+      logic.add("Material is checked by cumulative arrival and cumulative consumption, not only single-shift snapshots.");
+      logic.add("Component kit check is applied on first-process tasks using BOM-like inventory + inbound-time approximation.");
+      logic.add("Unscheduled tasks keep structured reason codes, for example TRANSFER_CONSTRAINT/LOCK_PREEMPTED_BY_URGENT.");
 
+      Comparator<MvpDomain.Order> priorityComparator = switch (strategyCode) {
+        case STRATEGY_MAX_CAPACITY_FIRST -> Comparator
+            .comparingDouble((MvpDomain.Order o) -> {
+              double totalQty = o.items == null ? 0d : o.items.stream().mapToDouble(item -> Math.max(0d, item.qty - item.completedQty)).sum();
+              return -totalQty;
+            })
+            .thenComparing((MvpDomain.Order o) -> !o.urgent)
+            .thenComparing(o -> o.dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(o -> o.orderNo);
+        case STRATEGY_MIN_DELAY_FIRST -> Comparator
+            .comparing((MvpDomain.Order o) -> o.dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing((MvpDomain.Order o) -> !o.urgent)
+            .thenComparing(o -> o.orderNo);
+        default -> Comparator
+            .comparing((MvpDomain.Order o) -> !o.urgent)
+            .thenComparing(o -> o.dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(o -> o.orderNo);
+      };
       List<Map<String, Object>> priorityPreview = state.orders.stream()
-        .sorted(Comparator
-          .comparing((MvpDomain.Order o) -> !o.urgent)
-          .thenComparing(o -> o.dueDate, Comparator.nullsLast(Comparator.naturalOrder()))
-          .thenComparing(o -> o.orderNo))
+        .sorted(priorityComparator)
         .limit(10)
         .map(order -> {
           Map<String, Object> row = new LinkedHashMap<>();
@@ -1800,6 +1857,10 @@ public class MvpStoreService {
           row.put("due_date", order.dueDate == null ? null : order.dueDate.toString());
           row.put("status", order.status);
           row.put("status_name_cn", statusNameCn(order.status));
+          row.put(
+            "remaining_qty",
+            round2(order.items == null ? 0d : order.items.stream().mapToDouble(item -> Math.max(0d, item.qty - item.completedQty)).sum())
+          );
           return row;
         })
         .toList();
@@ -2029,6 +2090,8 @@ public class MvpStoreService {
       out.put("rule_version_no", schedule.ruleVersionNo);
       out.put("created_at", schedule.createdAt == null ? null : schedule.createdAt.toString());
       out.put("publish_time", schedule.publishTime == null ? null : schedule.publishTime.toString());
+      out.put("strategy_code", strategyCode);
+      out.put("strategy_name_cn", strategyNameCn);
       out.put("summary", summary);
       out.put("logic", logic);
       out.put("priority_preview", priorityPreview);
@@ -2165,6 +2228,12 @@ public class MvpStoreService {
       for (MvpDomain.Order order : state.orders) {
         MvpDomain.OrderBusinessData business = businessData(order);
         double totalQty = order.items.stream().mapToDouble(item -> item.qty).sum();
+        LocalDate expectedStartDate = resolveExpectedStartDate(order);
+        String expectedStartTime = expectedStartDate == null ? null : toDateTime(expectedStartDate.toString(), "D", true);
+        String expectedFinishTime = estimateExpectedFinishTime(order);
+        LocalDate expectedFinishDate = parseLocalDateFlexible(expectedFinishTime, null);
+        String productCode = order.items.isEmpty() ? "UNKNOWN" : normalizeCode(order.items.get(0).productCode);
+        List<Map<String, Object>> processContexts = buildProcessContextsForProduct(productCode);
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("production_order_no", order.orderNo);
         row.put("source_sales_order_no", business.salesOrderNo == null || business.salesOrderNo.isBlank()
@@ -2175,8 +2244,17 @@ public class MvpStoreService {
         row.put("material_list_no", "ML-" + order.orderNo);
         row.put("product_code", order.items.isEmpty() ? "UNKNOWN" : order.items.get(0).productCode);
         row.put("product_name_cn", business.productName);
+        row.put("workshop_codes", joinContextValues(processContexts, "workshop_code"));
+        row.put("line_codes", joinContextValues(processContexts, "line_code"));
+        row.put("process_codes", joinContextValues(processContexts, "process_code"));
+        row.put("process_route_summary", summarizeProcessContexts(processContexts));
+        row.put("process_contexts", processContexts);
         row.put("plan_qty", totalQty);
         row.put("production_status", order.status);
+        row.put("expected_start_date", expectedStartDate == null ? null : expectedStartDate.toString());
+        row.put("expected_start_time", expectedStartTime);
+        row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
+        row.put("expected_finish_time", expectedFinishTime);
         row.put("order_date", business.orderDate == null ? null : business.orderDate.toString());
         row.put("customer_remark", business.customerRemark);
         row.put("spec_model", business.specModel);
@@ -2490,8 +2568,8 @@ public class MvpStoreService {
           Map<String, Object> row = new LinkedHashMap<>();
           row.put("equipment_code", processCode + "-EQ-" + i);
           row.put("process_code", processCode);
-          row.put("line_code", "LINE-A");
-          row.put("workshop_code", "WS-A");
+          row.put("line_code", lineCodeForProcess(processCode));
+          row.put("workshop_code", workshopCodeForProcess(processCode));
           row.put("status", "AVAILABLE");
           row.put("capacity_per_shift", 1);
           row.put("last_update_time", now);
@@ -2655,6 +2733,303 @@ public class MvpStoreService {
       out.put("message", "Masterdata config updated.");
       return out;
     }
+  }
+
+  public Map<String, Object> createMasterdataRoute(
+    Map<String, Object> payload,
+    String requestId,
+    String operator
+  ) {
+    synchronized (lock) {
+      String productCode = normalizeCode(string(payload, "product_code", string(payload, "productCode", null)));
+      if (productCode.isBlank()) {
+        throw badRequest("product_code is required.");
+      }
+      if (state.processRoutes.containsKey(productCode)) {
+        throw badRequest("Route already exists for product_code: " + productCode);
+      }
+
+      List<Map<String, Object>> routeStepRows = extractRouteStepRows(payload);
+      List<MvpDomain.ProcessStep> steps = parseRouteSteps(routeStepRows);
+      upsertProcessRoute(productCode, steps);
+      rebuildMasterdataHorizonWindow();
+
+      appendAudit(
+        "MASTERDATA",
+        "ROUTE-" + productCode,
+        "CREATE_PROCESS_ROUTE",
+        operator,
+        requestId,
+        "product_code=" + productCode + ", step_count=" + steps.size()
+      );
+
+      return buildRouteMutationResult(requestId, productCode, "Process route created.", false);
+    }
+  }
+
+  public Map<String, Object> updateMasterdataRoute(
+    Map<String, Object> payload,
+    String requestId,
+    String operator
+  ) {
+    synchronized (lock) {
+      String productCode = normalizeCode(string(payload, "product_code", string(payload, "productCode", null)));
+      if (productCode.isBlank()) {
+        throw badRequest("product_code is required.");
+      }
+      if (!state.processRoutes.containsKey(productCode)) {
+        throw notFound("Route not found for product_code: " + productCode);
+      }
+
+      List<Map<String, Object>> routeStepRows = extractRouteStepRows(payload);
+      List<MvpDomain.ProcessStep> steps = parseRouteSteps(routeStepRows);
+      upsertProcessRoute(productCode, steps);
+      rebuildMasterdataHorizonWindow();
+
+      appendAudit(
+        "MASTERDATA",
+        "ROUTE-" + productCode,
+        "UPDATE_PROCESS_ROUTE",
+        operator,
+        requestId,
+        "product_code=" + productCode + ", step_count=" + steps.size()
+      );
+
+      return buildRouteMutationResult(requestId, productCode, "Process route updated.", false);
+    }
+  }
+
+  public Map<String, Object> copyMasterdataRoute(
+    Map<String, Object> payload,
+    String requestId,
+    String operator
+  ) {
+    synchronized (lock) {
+      String sourceProductCode = normalizeCode(string(
+        payload,
+        "source_product_code",
+        string(payload, "sourceProductCode", string(payload, "product_code", string(payload, "productCode", null)))
+      ));
+      String targetProductCode = normalizeCode(string(
+        payload,
+        "target_product_code",
+        string(payload, "targetProductCode", string(payload, "new_product_code", string(payload, "newProductCode", null)))
+      ));
+      if (sourceProductCode.isBlank()) {
+        throw badRequest("source_product_code is required.");
+      }
+      if (targetProductCode.isBlank()) {
+        throw badRequest("target_product_code is required.");
+      }
+      if (sourceProductCode.equals(targetProductCode)) {
+        throw badRequest("source_product_code and target_product_code cannot be the same.");
+      }
+
+      List<MvpDomain.ProcessStep> sourceRoute = state.processRoutes.get(sourceProductCode);
+      if (sourceRoute == null || sourceRoute.isEmpty()) {
+        throw notFound("Route not found for source_product_code: " + sourceProductCode);
+      }
+
+      boolean overwrite = bool(payload, "overwrite", false);
+      if (state.processRoutes.containsKey(targetProductCode) && !overwrite) {
+        throw badRequest("Route already exists for target_product_code: " + targetProductCode + ". Set overwrite=true to replace.");
+      }
+
+      List<Map<String, Object>> routeStepRows = extractRouteStepRows(payload);
+      List<MvpDomain.ProcessStep> steps = routeStepRows.isEmpty()
+        ? cloneProcessSteps(sourceRoute)
+        : parseRouteSteps(routeStepRows);
+      upsertProcessRoute(targetProductCode, steps);
+      rebuildMasterdataHorizonWindow();
+
+      appendAudit(
+        "MASTERDATA",
+        "ROUTE-" + targetProductCode,
+        "COPY_PROCESS_ROUTE",
+        operator,
+        requestId,
+        "source_product_code=" + sourceProductCode + ", target_product_code=" + targetProductCode + ", step_count=" + steps.size()
+      );
+
+      Map<String, Object> out = buildRouteMutationResult(requestId, targetProductCode, "Process route copied.", false);
+      out.put("source_product_code", sourceProductCode);
+      return out;
+    }
+  }
+
+  public Map<String, Object> deleteMasterdataRoute(
+    Map<String, Object> payload,
+    String requestId,
+    String operator
+  ) {
+    synchronized (lock) {
+      String productCode = normalizeCode(string(payload, "product_code", string(payload, "productCode", null)));
+      if (productCode.isBlank()) {
+        throw badRequest("product_code is required.");
+      }
+      if (!state.processRoutes.containsKey(productCode)) {
+        throw notFound("Route not found for product_code: " + productCode);
+      }
+
+      Map<String, List<MvpDomain.ProcessStep>> nextRoutes = mutableProcessRoutesCopy();
+      nextRoutes.remove(productCode);
+      state.processRoutes = sortProcessRoutes(nextRoutes);
+      rebuildMasterdataHorizonWindow();
+
+      appendAudit(
+        "MASTERDATA",
+        "ROUTE-" + productCode,
+        "DELETE_PROCESS_ROUTE",
+        operator,
+        requestId,
+        "product_code=" + productCode
+      );
+
+      return buildRouteMutationResult(requestId, productCode, "Process route deleted.", true);
+    }
+  }
+
+  private Map<String, Object> buildRouteMutationResult(
+    String requestId,
+    String productCode,
+    String message,
+    boolean deleted
+  ) {
+    Map<String, Object> out = new LinkedHashMap<>();
+    out.put("request_id", requestId);
+    out.put("message", message);
+    out.put("product_code", productCode);
+    out.put("route_no", "ROUTE-" + productCode);
+    out.put("deleted", deleted);
+
+    List<MvpDomain.ProcessStep> steps = state.processRoutes.getOrDefault(productCode, List.of());
+    List<Map<String, Object>> stepRows = new ArrayList<>();
+    for (int i = 0; i < steps.size(); i += 1) {
+      MvpDomain.ProcessStep step = steps.get(i);
+      stepRows.add(localizeRow(Map.of(
+        "route_no", "ROUTE-" + productCode,
+        "product_code", productCode,
+        "process_code", step.processCode,
+        "sequence_no", i + 1,
+        "dependency_type", step.dependencyType
+      )));
+    }
+    out.put("steps", stepRows);
+    out.put("route_count", state.processRoutes.size());
+    return out;
+  }
+
+  private List<Map<String, Object>> extractRouteStepRows(Map<String, Object> payload) {
+    List<Map<String, Object>> rows = maps(payload == null ? null : payload.get("steps"));
+    if (rows.isEmpty()) {
+      rows = maps(payload == null ? null : payload.get("process_steps"));
+    }
+    if (rows.isEmpty()) {
+      rows = maps(payload == null ? null : payload.get("route_steps"));
+    }
+    return rows;
+  }
+
+  private List<MvpDomain.ProcessStep> parseRouteSteps(List<Map<String, Object>> rows) {
+    if (rows == null || rows.isEmpty()) {
+      throw badRequest("steps is required and cannot be empty.");
+    }
+
+    Set<String> validProcessCodes = new HashSet<>();
+    for (MvpDomain.ProcessConfig process : state.processes) {
+      validProcessCodes.add(normalizeCode(process.processCode));
+    }
+
+    List<Map<String, Object>> normalizedRows = new ArrayList<>();
+    for (int i = 0; i < rows.size(); i += 1) {
+      Map<String, Object> row = rows.get(i);
+      String processCode = normalizeCode(string(row, "process_code", string(row, "processCode", null)));
+      if (processCode.isBlank()) {
+        throw badRequest("process_code is required in steps.");
+      }
+      if (!validProcessCodes.contains(processCode)) {
+        throw badRequest("Unknown process_code in steps: " + processCode);
+      }
+      String dependencyType = normalizeRouteDependencyType(
+        string(row, "dependency_type", string(row, "dependencyType", "FS"))
+      );
+      double sequenceNo = number(row, "sequence_no", number(row, "sequenceNo", i + 1d));
+
+      Map<String, Object> normalized = new LinkedHashMap<>();
+      normalized.put("process_code", processCode);
+      normalized.put("dependency_type", dependencyType);
+      normalized.put("sequence_no", sequenceNo);
+      normalized.put("input_index", i);
+      normalizedRows.add(normalized);
+    }
+
+    normalizedRows.sort((a, b) -> {
+      int bySequence = Double.compare(number(a, "sequence_no", 0d), number(b, "sequence_no", 0d));
+      if (bySequence != 0) {
+        return bySequence;
+      }
+      return Integer.compare((int) number(a, "input_index", 0d), (int) number(b, "input_index", 0d));
+    });
+
+    Set<String> uniqueProcessCodes = new HashSet<>();
+    List<MvpDomain.ProcessStep> steps = new ArrayList<>();
+    for (Map<String, Object> row : normalizedRows) {
+      String processCode = normalizeCode(string(row, "process_code", null));
+      if (!uniqueProcessCodes.add(processCode)) {
+        throw badRequest("Duplicate process_code in steps: " + processCode);
+      }
+      steps.add(new MvpDomain.ProcessStep(
+        processCode,
+        normalizeRouteDependencyType(string(row, "dependency_type", "FS"))
+      ));
+    }
+    return steps;
+  }
+
+  private String normalizeRouteDependencyType(String dependencyType) {
+    String normalized = normalizeCode(dependencyType);
+    if (normalized.isBlank()) {
+      return "FS";
+    }
+    if ("FS".equals(normalized) || "SS".equals(normalized)) {
+      return normalized;
+    }
+    throw badRequest("dependency_type must be FS or SS.");
+  }
+
+  private void upsertProcessRoute(String productCode, List<MvpDomain.ProcessStep> steps) {
+    Map<String, List<MvpDomain.ProcessStep>> nextRoutes = mutableProcessRoutesCopy();
+    nextRoutes.put(productCode, cloneProcessSteps(steps));
+    state.processRoutes = sortProcessRoutes(nextRoutes);
+  }
+
+  private Map<String, List<MvpDomain.ProcessStep>> mutableProcessRoutesCopy() {
+    Map<String, List<MvpDomain.ProcessStep>> out = new LinkedHashMap<>();
+    for (Map.Entry<String, List<MvpDomain.ProcessStep>> entry : state.processRoutes.entrySet()) {
+      out.put(entry.getKey(), cloneProcessSteps(entry.getValue()));
+    }
+    return out;
+  }
+
+  private List<MvpDomain.ProcessStep> cloneProcessSteps(List<MvpDomain.ProcessStep> source) {
+    List<MvpDomain.ProcessStep> out = new ArrayList<>();
+    if (source == null) {
+      return out;
+    }
+    for (MvpDomain.ProcessStep step : source) {
+      out.add(new MvpDomain.ProcessStep(step.processCode, step.dependencyType));
+    }
+    return out;
+  }
+
+  private Map<String, List<MvpDomain.ProcessStep>> sortProcessRoutes(Map<String, List<MvpDomain.ProcessStep>> routes) {
+    List<String> products = new ArrayList<>(routes.keySet());
+    products.sort(String::compareTo);
+    Map<String, List<MvpDomain.ProcessStep>> ordered = new LinkedHashMap<>();
+    for (String productCode : products) {
+      ordered.put(productCode, cloneProcessSteps(routes.get(productCode)));
+    }
+    return ordered;
   }
 
   private List<Map<String, Object>> listProcessConfigRowsForEdit() {
@@ -3233,7 +3608,14 @@ public class MvpStoreService {
     if (baseVersionNo == null) {
       throw badRequest("base_version_no is required.");
     }
-    getScheduleEntity(baseVersionNo);
+    MvpDomain.ScheduleVersion baseVersion = getScheduleEntity(baseVersionNo);
+    String strategyCode = normalizeScheduleStrategy(
+      string(
+        payload,
+        "strategy_code",
+        firstString(baseVersion.metadata, "schedule_strategy_code", "scheduleStrategyCode", "strategy_code", "strategyCode")
+      )
+    );
     String jobNo = "RPJ-%05d".formatted(replanSeq.incrementAndGet());
     Map<String, Object> job = new LinkedHashMap<>();
     job.put("request_id", requestId);
@@ -3246,12 +3628,19 @@ public class MvpStoreService {
     job.put("created_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
     job.put("finished_at", null);
     job.put("error_msg", "");
+    job.put("strategy_code", strategyCode);
+    job.put("strategy_name_cn", scheduleStrategyNameCn(strategyCode));
     state.replanJobs.add(job);
     long startNanos = System.nanoTime();
     String reason = string(payload, "reason", null);
     try {
+      Map<String, Object> generatePayload = new LinkedHashMap<>();
+      generatePayload.put("request_id", requestId + ":generate");
+      generatePayload.put("base_version_no", baseVersionNo);
+      generatePayload.put("autoReplan", true);
+      generatePayload.put("strategy_code", strategyCode);
       Map<String, Object> schedule = generateSchedule(
-        Map.of("request_id", requestId + ":generate", "base_version_no", baseVersionNo, "autoReplan", true),
+        generatePayload,
         requestId + ":generate",
         operator
       );
@@ -3264,6 +3653,7 @@ public class MvpStoreService {
       perfContext.put("phase", "replan_job");
       perfContext.put("duration_ms", elapsedMillis(startNanos));
       perfContext.put("result_version_no", schedule.get("versionNo"));
+      perfContext.put("strategy_code", strategyCode);
       appendAudit("REPLAN_JOB", jobNo, "TRIGGER_REPLAN", operator, requestId, reason, perfContext);
       return new LinkedHashMap<>(job);
     } catch (RuntimeException ex) {
@@ -3486,7 +3876,26 @@ public class MvpStoreService {
       ));
     }
     MvpDomain.OrderBusinessData businessData = parseBusinessData(payload, orderNo, orderItems, dueDate);
-    return new MvpDomain.Order(orderNo, orderType, dueDate, urgent, frozen, lockFlag, status, orderItems, businessData);
+    LocalDate expectedStartDate = parseLocalDateFlexible(
+      string(
+        payload,
+        "expected_start_date",
+        string(payload, "expectedStartDate", string(payload, "expected_start_time", string(payload, "expectedStartTime", null)))
+      ),
+      state.startDate
+    );
+    return new MvpDomain.Order(
+      orderNo,
+      orderType,
+      dueDate,
+      expectedStartDate,
+      urgent,
+      frozen,
+      lockFlag,
+      status,
+      orderItems,
+      businessData
+    );
   }
 
   private void applyOrderPatch(MvpDomain.Order order, Map<String, Object> patch) {
@@ -3513,6 +3922,22 @@ public class MvpStoreService {
     }
     if (patch.containsKey("due_date")) {
       order.dueDate = LocalDate.parse(string(patch, "due_date", order.dueDate.toString()));
+    }
+    if (
+      patch.containsKey("expected_start_date")
+        || patch.containsKey("expectedStartDate")
+        || patch.containsKey("expected_start_time")
+        || patch.containsKey("expectedStartTime")
+    ) {
+      LocalDate fallback = order.expectedStartDate == null ? state.startDate : order.expectedStartDate;
+      order.expectedStartDate = parseLocalDateFlexible(
+        string(
+          patch,
+          "expected_start_date",
+          string(patch, "expectedStartDate", string(patch, "expected_start_time", string(patch, "expectedStartTime", null)))
+        ),
+        fallback
+      );
     }
     if (patch.containsKey("status")) {
       order.status = string(patch, "status", order.status);
@@ -3918,8 +4343,169 @@ public class MvpStoreService {
     return new ReportVersionBinding(schedule.versionNo, schedule.status, orderNos);
   }
 
+  private LocalDate resolveExpectedStartDate(MvpDomain.Order order) {
+    if (order == null) {
+      return state.startDate;
+    }
+    if (order.expectedStartDate != null) {
+      return order.expectedStartDate;
+    }
+    MvpDomain.OrderBusinessData business = businessData(order);
+    if (business.orderDate != null) {
+      if (state.startDate == null) {
+        return business.orderDate;
+      }
+      return business.orderDate.isBefore(state.startDate) ? state.startDate : business.orderDate;
+    }
+    if (state.startDate != null) {
+      return state.startDate;
+    }
+    return order.dueDate;
+  }
+
+  private String estimateExpectedFinishTime(MvpDomain.Order order) {
+    LocalDate startDate = resolveExpectedStartDate(order);
+    if (startDate == null) {
+      return null;
+    }
+    int requiredShifts = estimateRequiredShifts(order);
+    int shiftsPerDay = Math.max(1, Math.min(2, state.shiftsPerDay));
+    int finishShiftIndex = Math.max(0, requiredShifts <= 0 ? 0 : requiredShifts - 1);
+    LocalDate finishDate = startDate.plusDays(finishShiftIndex / shiftsPerDay);
+    String finishShiftCode = shiftsPerDay == 1 ? "D" : (finishShiftIndex % shiftsPerDay == 0 ? "D" : "N");
+    return toDateTime(finishDate.toString(), finishShiftCode, false);
+  }
+
+  private int estimateRequiredShifts(MvpDomain.Order order) {
+    if (order == null || order.items == null || order.items.isEmpty()) {
+      return 0;
+    }
+    int totalShifts = 0;
+    for (MvpDomain.OrderItem item : order.items) {
+      double remainingQty = Math.max(0d, item.qty - item.completedQty);
+      if (remainingQty <= 1e-9d) {
+        continue;
+      }
+      List<MvpDomain.ProcessStep> route = state.processRoutes.getOrDefault(item.productCode, List.of());
+      if (route.isEmpty()) {
+        totalShifts += Math.max(1, (int) Math.ceil(remainingQty / 1000d));
+        continue;
+      }
+      for (MvpDomain.ProcessStep step : route) {
+        double shiftCapacity = estimateProcessCapacityPerShift(step.processCode);
+        double normalizedCapacity = shiftCapacity <= 1e-9d ? 1d : shiftCapacity;
+        totalShifts += Math.max(1, (int) Math.ceil(remainingQty / normalizedCapacity));
+      }
+    }
+    return totalShifts;
+  }
+
+  private double estimateProcessCapacityPerShift(String processCode) {
+    String normalizedProcessCode = normalizeCode(processCode);
+    if (normalizedProcessCode.isBlank()) {
+      return 0d;
+    }
+    MvpDomain.ProcessConfig config = state.processes.stream()
+      .filter(row -> normalizedProcessCode.equals(normalizeCode(row.processCode)))
+      .findFirst()
+      .orElse(null);
+    if (config == null) {
+      return 0d;
+    }
+
+    int requiredWorkers = Math.max(1, config.requiredWorkers);
+    int requiredMachines = Math.max(1, config.requiredMachines);
+    int maxWorkers = maxResourceForProcess(state.workerPools, normalizedProcessCode);
+    int maxMachines = maxResourceForProcess(state.machinePools, normalizedProcessCode);
+    if (maxWorkers <= 0) {
+      maxWorkers = requiredWorkers;
+    }
+    if (maxMachines <= 0) {
+      maxMachines = requiredMachines;
+    }
+    int groupsByWorkers = Math.max(1, maxWorkers / requiredWorkers);
+    int groupsByMachines = Math.max(1, maxMachines / requiredMachines);
+    int groups = Math.max(1, Math.min(groupsByWorkers, groupsByMachines));
+    return round2(config.capacityPerShift * groups);
+  }
+
+  private int maxResourceForProcess(List<MvpDomain.ResourceRow> rows, String processCode) {
+    int max = 0;
+    for (MvpDomain.ResourceRow row : rows) {
+      if (normalizeCode(row.processCode).equals(processCode)) {
+        max = Math.max(max, Math.max(0, row.available));
+      }
+    }
+    return max;
+  }
+
+  private String orderPrimaryProductCode(MvpDomain.Order order) {
+    if (order == null || order.items == null || order.items.isEmpty()) {
+      return "UNKNOWN";
+    }
+    return normalizeCode(order.items.get(0).productCode);
+  }
+
+  private List<Map<String, Object>> buildProcessContextsForProduct(String productCode) {
+    String normalizedProductCode = normalizeCode(productCode);
+    List<MvpDomain.ProcessStep> route = state.processRoutes.getOrDefault(normalizedProductCode, List.of());
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (int i = 0; i < route.size(); i += 1) {
+      MvpDomain.ProcessStep step = route.get(i);
+      String processCode = normalizeCode(step.processCode);
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("sequence_no", i + 1);
+      row.put("product_code", normalizedProductCode);
+      row.put("product_name_cn", productNameCn(normalizedProductCode));
+      row.put("process_code", processCode);
+      row.put("process_name_cn", processNameCn(processCode));
+      row.put("dependency_type", step.dependencyType == null ? "FS" : step.dependencyType);
+      row.put("workshop_code", workshopCodeForProcess(processCode));
+      row.put("line_code", lineCodeForProcess(processCode));
+      rows.add(row);
+    }
+    return rows;
+  }
+
+  private String summarizeProcessContexts(List<Map<String, Object>> rows) {
+    if (rows == null || rows.isEmpty()) {
+      return "";
+    }
+    List<String> parts = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      String processCode = firstString(row, "process_code");
+      String processName = firstString(row, "process_name_cn");
+      String workshopCode = firstString(row, "workshop_code");
+      String lineCode = firstString(row, "line_code");
+      String label = (processName == null || processName.isBlank()) ? (processCode == null ? "-" : processCode) : processName;
+      parts.add(label + " (" + (workshopCode == null ? "-" : workshopCode) + "/" + (lineCode == null ? "-" : lineCode) + ")");
+    }
+    return String.join(" -> ", parts);
+  }
+
+  private String joinContextValues(List<Map<String, Object>> rows, String key) {
+    if (rows == null || rows.isEmpty()) {
+      return "";
+    }
+    List<String> values = new ArrayList<>();
+    for (Map<String, Object> row : rows) {
+      String value = firstString(row, key);
+      if (value == null || value.isBlank() || values.contains(value)) {
+        continue;
+      }
+      values.add(value);
+    }
+    return String.join(",", values);
+  }
+
   private Map<String, Object> toOrderMap(MvpDomain.Order order) {
     MvpDomain.OrderBusinessData business = businessData(order);
+    String productCode = orderPrimaryProductCode(order);
+    List<Map<String, Object>> processContexts = buildProcessContextsForProduct(productCode);
+    LocalDate expectedStartDate = resolveExpectedStartDate(order);
+    String expectedStartTime = expectedStartDate == null ? null : toDateTime(expectedStartDate.toString(), "D", true);
+    String expectedFinishTime = estimateExpectedFinishTime(order);
+    LocalDate expectedFinishDate = parseLocalDateFlexible(expectedFinishTime, null);
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("orderNo", order.orderNo);
     row.put("order_no", order.orderNo);
@@ -3935,6 +4521,15 @@ public class MvpStoreService {
     row.put("lock_flag", order.lockFlag ? 1 : 0);
     row.put("status", order.status);
     row.put("order_status", order.status);
+    row.put("expected_start_date", expectedStartDate == null ? null : expectedStartDate.toString());
+    row.put("expected_start_time", expectedStartTime);
+    row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
+    row.put("expected_finish_time", expectedFinishTime);
+    row.put("workshop_codes", joinContextValues(processContexts, "workshop_code"));
+    row.put("line_codes", joinContextValues(processContexts, "line_code"));
+    row.put("process_codes", joinContextValues(processContexts, "process_code"));
+    row.put("process_route_summary", summarizeProcessContexts(processContexts));
+    row.put("process_contexts", processContexts);
     row.put("order_date", business.orderDate == null ? null : business.orderDate.toString());
     row.put("customer_remark", business.customerRemark);
     row.put("product_name", business.productName);
@@ -3980,9 +4575,15 @@ public class MvpStoreService {
 
   private Map<String, Object> toOrderPoolItem(MvpDomain.Order order) {
     MvpDomain.OrderBusinessData business = businessData(order);
+    String productCode = orderPrimaryProductCode(order);
+    List<Map<String, Object>> processContexts = buildProcessContextsForProduct(productCode);
     double totalQty = order.items.stream().mapToDouble(item -> item.qty).sum();
     double completedQty = order.items.stream().mapToDouble(item -> item.completedQty).sum();
     double progressRate = totalQty > 0d ? Math.min(100d, Math.max(0d, (completedQty / totalQty) * 100d)) : 0d;
+    LocalDate expectedStartDate = resolveExpectedStartDate(order);
+    String expectedStartTime = expectedStartDate == null ? null : toDateTime(expectedStartDate.toString(), "D", true);
+    String expectedFinishTime = estimateExpectedFinishTime(order);
+    LocalDate expectedFinishDate = parseLocalDateFlexible(expectedFinishTime, null);
     Map<String, Object> row = new LinkedHashMap<>();
     row.put("order_no", order.orderNo);
     row.put("order_type", order.orderType);
@@ -3993,6 +4594,15 @@ public class MvpStoreService {
     row.put("completed_qty", round2(completedQty));
     row.put("remaining_qty", round2(Math.max(0d, totalQty - completedQty)));
     row.put("progress_rate", round2(progressRate));
+    row.put("expected_start_date", expectedStartDate == null ? null : expectedStartDate.toString());
+    row.put("expected_start_time", expectedStartTime);
+    row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
+    row.put("expected_finish_time", expectedFinishTime);
+    row.put("workshop_codes", joinContextValues(processContexts, "workshop_code"));
+    row.put("line_codes", joinContextValues(processContexts, "line_code"));
+    row.put("process_codes", joinContextValues(processContexts, "process_code"));
+    row.put("process_route_summary", summarizeProcessContexts(processContexts));
+    row.put("process_contexts", processContexts);
     row.put("expected_due_date", toDateTime(order.dueDate.toString(), "D", true));
     row.put("promised_due_date", toDateTime(order.dueDate.toString(), "D", true));
     row.put("urgent_flag", order.urgent ? 1 : 0);
@@ -4445,6 +5055,26 @@ public class MvpStoreService {
     return SEVERITY_NAME_CN.getOrDefault(severity, severity == null ? "" : severity);
   }
 
+  private static String workshopCodeForProcess(String processCode) {
+    String normalized = normalizeCode(processCode);
+    if (normalized.contains("STERILE")) {
+      return "WS-STERILE";
+    }
+    return "WS-PRODUCTION";
+  }
+
+  private static String lineCodeForProcess(String processCode) {
+    String normalized = normalizeCode(processCode);
+    return switch (normalized) {
+      case "PROC_TUBE" -> "LINE-TUBE";
+      case "PROC_ASSEMBLY" -> "LINE-ASSEMBLY";
+      case "PROC_BALLOON" -> "LINE-BALLOON";
+      case "PROC_STENT" -> "LINE-STENT";
+      case "PROC_STERILE" -> "LINE-STERILE";
+      default -> "LINE-MIXED";
+    };
+  }
+
   private static String routeNameCn(String routeNo) {
     if (routeNo != null && routeNo.startsWith("ROUTE-")) {
       String productCode = routeNo.substring("ROUTE-".length());
@@ -4635,9 +5265,14 @@ public class MvpStoreService {
       case "CAPACITY_MANPOWER" -> "当前班次人力不足，无法继续排产";
       case "CAPACITY_MACHINE" -> "当前班次设备不足，无法继续排产";
       case "MATERIAL_SHORTAGE" -> "当前班次物料不足，无法继续排产";
+      case "COMPONENT_SHORTAGE" -> "BOM组件未齐套或未到料，当前班次无法排产";
+      case "TRANSFER_CONSTRAINT" -> "受最小转运批量、批间等待或最小批次限制，当前班次暂不可排";
+      case "BEFORE_EXPECTED_START" -> "未到订单预计开始时间，当前班次暂不排产";
       case "DEPENDENCY_BLOCKED", "DEPENDENCY_LIMIT" -> "受前序工序约束，后序暂时不可继续排产";
       case "FROZEN_BY_POLICY" -> "订单处于冻结策略中，不参与本轮排产";
-      case "LOCKED_PRESERVED" -> "订单已锁定并保留原计划，不参与本轮重排";
+      case "LOCKED_PRESERVED" -> "锁单按基线保留，本轮不重排该部分任务";
+      case "URGENT_GUARANTEE" -> "加急订单触发保底资源或最低日产出保护";
+      case "LOCK_PREEMPTED_BY_URGENT" -> "为保障加急订单，锁单资源被部分让位";
       case "CAPACITY_LIMIT", "CAPACITY_UNKNOWN" -> "当前班次可用产能不足（人力/设备/物料受限）";
       case "UNKNOWN", "" -> "未标记原因";
       default -> normalized;
@@ -4676,8 +5311,8 @@ public class MvpStoreService {
   private static String toLegacyReasonCode(String reasonCode) {
     String normalized = normalizeReasonCode(reasonCode);
     return switch (normalized) {
-      case "CAPACITY_MANPOWER", "CAPACITY_MACHINE", "MATERIAL_SHORTAGE", "CAPACITY_UNKNOWN" -> "CAPACITY_LIMIT";
-      case "DEPENDENCY_BLOCKED" -> "DEPENDENCY_LIMIT";
+      case "CAPACITY_MANPOWER", "CAPACITY_MACHINE", "MATERIAL_SHORTAGE", "COMPONENT_SHORTAGE", "CAPACITY_UNKNOWN" -> "CAPACITY_LIMIT";
+      case "DEPENDENCY_BLOCKED", "TRANSFER_CONSTRAINT", "BEFORE_EXPECTED_START" -> "DEPENDENCY_LIMIT";
       default -> normalized;
     };
   }
@@ -4975,6 +5610,7 @@ public class MvpStoreService {
         productionOrderNo,
         "production",
         dueDate,
+        businessDate,
         urgent,
         false,
         false,
@@ -5385,6 +6021,7 @@ public class MvpStoreService {
       source.orderNo,
       source.orderType,
       source.dueDate,
+      source.expectedStartDate,
       source.urgent,
       source.frozen,
       source.lockFlag,
@@ -5552,6 +6189,23 @@ public class MvpStoreService {
       case "STABLE", "TIGHT", "BREAKDOWN" -> normalized;
       default -> DEFAULT_SIM_SCENARIO;
     };
+  }
+
+  private static String normalizeScheduleStrategy(String strategy) {
+    String normalized = strategy == null ? "" : strategy.trim().toUpperCase();
+    return switch (normalized) {
+      case "MAX_CAPACITY_FIRST", "最大产能优先" -> STRATEGY_MAX_CAPACITY_FIRST;
+      case "MIN_DELAY_FIRST", "MIN_TARDINESS_FIRST", "交期最小延期优先" -> STRATEGY_MIN_DELAY_FIRST;
+      case "KEY_ORDER_FIRST", "CRITICAL_ORDER_FIRST", "关键订单优先" -> STRATEGY_KEY_ORDER_FIRST;
+      default -> STRATEGY_KEY_ORDER_FIRST;
+    };
+  }
+
+  private static String scheduleStrategyNameCn(String strategyCode) {
+    return SCHEDULE_STRATEGY_NAME_CN.getOrDefault(
+      normalizeScheduleStrategy(strategyCode),
+      SCHEDULE_STRATEGY_NAME_CN.get(STRATEGY_KEY_ORDER_FIRST)
+    );
   }
 
   private static String normalizeCode(String value) {

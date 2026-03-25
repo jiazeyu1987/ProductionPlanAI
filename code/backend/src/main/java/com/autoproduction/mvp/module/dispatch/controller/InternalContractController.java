@@ -30,6 +30,18 @@ public class InternalContractController {
     return listResponse(request, store.listOrderPool(filters));
   }
 
+  @PostMapping("/order-pool/{orderNo}/patch")
+  public ResponseEntity<Map<String, Object>> patchOrderPoolOrder(
+    HttpServletRequest request,
+    @PathVariable("orderNo") String orderNo,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "order-pool-admin"));
+    return ApiSupport.ok(requestId, store.patchOrder(orderNo, body, requestId, operator));
+  }
+
   @GetMapping("/schedule-versions")
   public ResponseEntity<Map<String, Object>> listScheduleVersions(
     HttpServletRequest request,
@@ -74,6 +86,50 @@ public class InternalContractController {
     String requestId = ApiSupport.requireRequestId(request, body);
     String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
     return ApiSupport.ok(requestId, store.saveMasterdataConfig(body, requestId, operator));
+  }
+
+  @PostMapping("/masterdata/routes/create")
+  public ResponseEntity<Map<String, Object>> createMasterdataRoute(
+    HttpServletRequest request,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
+    return ApiSupport.ok(requestId, store.createMasterdataRoute(body, requestId, operator));
+  }
+
+  @PostMapping("/masterdata/routes/update")
+  public ResponseEntity<Map<String, Object>> updateMasterdataRoute(
+    HttpServletRequest request,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
+    return ApiSupport.ok(requestId, store.updateMasterdataRoute(body, requestId, operator));
+  }
+
+  @PostMapping("/masterdata/routes/copy")
+  public ResponseEntity<Map<String, Object>> copyMasterdataRoute(
+    HttpServletRequest request,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
+    return ApiSupport.ok(requestId, store.copyMasterdataRoute(body, requestId, operator));
+  }
+
+  @PostMapping("/masterdata/routes/delete")
+  public ResponseEntity<Map<String, Object>> deleteMasterdataRoute(
+    HttpServletRequest request,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    String operator = String.valueOf(body.getOrDefault("operator", "masterdata-admin"));
+    return ApiSupport.ok(requestId, store.deleteMasterdataRoute(body, requestId, operator));
   }
 
   @GetMapping("/schedule-versions/{versionNo}/diff")
