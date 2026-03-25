@@ -148,10 +148,44 @@ button:hover {
   border-color: var(--accent);
 }
 
+.btn-danger-text {
+  color: #b32020;
+}
+
+.btn-danger-text:hover {
+  color: #9b1111;
+}
+
+.btn-success-text {
+  color: #0f6e4f;
+}
+
+.btn-success-text:hover {
+  color: #0b5b41;
+}
+
 .table-wrap {
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
+}
+
+.lite-page {
+  overflow-x: hidden;
+}
+
+.lite-page .table-wrap {
+  overflow-x: hidden;
+}
+
+.lite-page table {
+  table-layout: fixed;
+}
+
+.lite-page th,
+.lite-page td {
+  white-space: normal;
+  word-break: break-word;
 }
 
 .report-tabs {
@@ -426,13 +460,182 @@ th {
   border-radius: 999px;
   padding: 1px 6px;
   background: #f1f6f2;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
   font-size: 0.74rem;
 }
 
 .lite-chip-locked {
   background: #fff0df;
   border-color: #f0c892;
+}
+
+.lite-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: #10201866;
+}
+
+.lite-modal {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+}
+
+.lite-sub-title {
+  margin: 8px 0;
+}
+
+.lite-allocation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.lite-allocation-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lite-allocation-row select,
+.lite-allocation-row input {
+  min-width: 140px;
+}
+
+.lite-line-name {
+  min-width: 180px;
+  font-weight: 600;
+}
+
+.lite-calendar-wrap {
+  margin-top: 10px;
+}
+
+.lite-calendar-head {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.lite-calendar-weekday {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.lite-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lite-calendar-cell {
+  min-height: 78px;
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 6px;
+  background: #fff;
+}
+
+.lite-calendar-cell-empty {
+  border-style: dashed;
+  background: #f8fbf9;
+}
+
+.lite-calendar-cell-out {
+  background: #f6f8f7;
+}
+
+.lite-calendar-date {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lite-cal-summary {
+  display: grid;
+  gap: 2px;
+}
+
+.lite-cal-summary span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.lite-cal-summary strong {
+  font-size: 0.78rem;
+}
+
+.lite-cal-line-list {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.lite-cal-line-item {
+  border-top: 1px dashed #dbe6de;
+  padding-top: 4px;
+}
+
+.lite-cal-line-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #234236;
+}
+
+.lite-cal-line-orders {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.lite-day-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lite-day-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbf9;
+  padding: 10px;
+}
+
+.lite-day-header {
+  margin-bottom: 8px;
+}
+
+.lite-day-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.lite-day-line {
+  display: grid;
+  grid-template-columns: minmax(96px, 130px) minmax(0, 1fr);
+  gap: 8px;
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+
+.lite-day-line-name {
+  font-weight: 600;
+  color: #234236;
 }
 
 .diff-tag {
@@ -499,8 +702,29 @@ th {
   .card-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .lite-timeline-table th:first-child,
-  .lite-timeline-table td:first-child {
-    position: static;
+  .lite-calendar-weekday {
+    font-size: 0.68rem;
+  }
+  .lite-calendar-cell {
+    min-height: 64px;
+    padding: 4px;
+  }
+  .lite-calendar-date {
+    font-size: 0.72rem;
+  }
+  .lite-cal-summary span {
+    font-size: 0.64rem;
+  }
+  .lite-cal-summary strong {
+    font-size: 0.7rem;
+  }
+  .lite-cal-line-name {
+    font-size: 0.64rem;
+  }
+  .lite-cal-line-orders {
+    font-size: 0.62rem;
+  }
+  .lite-day-line {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

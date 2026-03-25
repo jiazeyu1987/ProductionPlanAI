@@ -18,7 +18,6 @@ const links = [
   ["/dashboard", "看板"],
   ["/orders/pool", "生产订单"],
   ["/schedule/board", "调度台"],
-  ["/schedule/lite", "简版排产"],
   ["/reports/plans", "计划报表"],
   ["/schedule/versions", "排产历史"],
   ["/dispatch/commands", "指令审批"],
@@ -28,7 +27,8 @@ const links = [
   ["/masterdata", "主数据"],
   ["/ops/integration", "同步监控"],
   ["/simulation", "仿真"],
-  ["/guide", "说明页"]
+  ["/guide", "说明页"],
+  ["/schedule/lite", "璞慧排产"]
 ];
 
 export default function App() {

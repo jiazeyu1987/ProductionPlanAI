@@ -36,6 +36,154 @@ function parseIsoDate(value) {
   return { year, month, day, ts };
 }
 
+function dayNumber(dateText) {
+  const parsed = parseIsoDate(dateText);
+  return parsed ? Math.round(parsed.ts / DAY_MS) : null;
+}
+
+function clampNumber(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return fallback;
+  }
+  return n;
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+function positiveOr(value, fallback = 0) {
+  return Math.max(0, round3(clampNumber(value, fallback)));
+}
+
+function integerInRange(value, fallback, min, max) {
+  const n = Math.round(clampNumber(value, fallback));
+  return Math.min(max, Math.max(min, n));
+}
+
+function makeId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function inferNextOrderSeq(orders) {
+  let maxSeq = 0;
+  (orders || []).forEach((order) => {
+    const seq = Number(order?.orderSeq);
+    if (Number.isFinite(seq) && seq > maxSeq) {
+      maxSeq = seq;
+    }
+  });
+  return Math.max(1, maxSeq + 1);
+}
+
+function normalizePriority(value) {
+  if (String(value || "").toUpperCase() === "URGENT") {
+    return "URGENT";
+  }
+  return "NORMAL";
+}
+
+function extractTrailingNumber(text) {
+  const match = String(text || "").match(/(\d+)(?!.*\d)/);
+  if (!match) {
+    return null;
+  }
+  const n = Number(match[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeLine(line, index) {
+  const id = String(line?.id || makeId("line"));
+  const name = String(line?.name || "").trim() || `产线-${index + 1}`;
+  const baseCapacity = positiveOr(line?.baseCapacity, 300);
+  const enabled = line?.enabled !== false;
+  const capacityOverrides = {};
+  Object.entries(line?.capacityOverrides || {}).forEach(([dateKey, capacityValue]) => {
+    if (parseIsoDate(dateKey)) {
+      capacityOverrides[dateKey] = positiveOr(capacityValue, baseCapacity);
+    }
+  });
+  return { id, name, baseCapacity, capacityOverrides, enabled };
+}
+
+function normalizeOrderLineWorkloads(inputValue) {
+  const normalized = {};
+  Object.entries(inputValue || {}).forEach(([lineIdRaw, daysRaw]) => {
+    const lineId = String(lineIdRaw || "").trim();
+    const days = positiveOr(daysRaw, 0);
+    if (lineId && days > EPSILON) {
+      normalized[lineId] = round3((normalized[lineId] || 0) + days);
+    }
+  });
+  return normalized;
+}
+
+function normalizeOrder(order, index, horizonStart) {
+  const id = String(order?.id || makeId("order"));
+  const orderNo = String(order?.orderNo || "").trim() || `SO-${pad2(index + 1)}`;
+  const inferredSeq = extractTrailingNumber(orderNo) ?? index + 1;
+  const orderSeqRaw = Number(order?.orderSeq);
+  const orderSeq = Number.isFinite(orderSeqRaw) ? Math.max(1, Math.round(orderSeqRaw)) : Math.max(1, inferredSeq);
+  const lineWorkloads = normalizeOrderLineWorkloads(order?.lineWorkloads);
+  const lineWorkloadTotal = round3(Object.values(lineWorkloads).reduce((sum, value) => sum + value, 0));
+  const baseWorkloadDays = positiveOr(order?.workloadDays, lineWorkloadTotal > EPSILON ? lineWorkloadTotal : 1);
+  const workloadDays = Math.max(baseWorkloadDays, lineWorkloadTotal);
+  const completedDays = Math.min(workloadDays, positiveOr(order?.completedDays, 0));
+  const dueDate = parseIsoDate(order?.dueDate) ? order.dueDate : addDays(horizonStart, 7);
+  const releaseDate = parseIsoDate(order?.releaseDate) ? order.releaseDate : horizonStart;
+  return {
+    id,
+    orderNo,
+    workloadDays,
+    completedDays,
+    dueDate,
+    releaseDate,
+    priority: "NORMAL",
+    orderSeq,
+    lineWorkloads
+  };
+}
+
+function normalizeLock(lock, index, fallbackStart) {
+  const id = String(lock?.id || makeId("lock"));
+  const orderId = String(lock?.orderId || "").trim();
+  const lineId = String(lock?.lineId || "").trim();
+  const startDateRaw = parseIsoDate(lock?.startDate) ? lock.startDate : fallbackStart;
+  const endDateRaw = parseIsoDate(lock?.endDate) ? lock.endDate : startDateRaw;
+  const startDate = compareDate(startDateRaw, endDateRaw) <= 0 ? startDateRaw : endDateRaw;
+  const endDate = compareDate(startDateRaw, endDateRaw) <= 0 ? endDateRaw : startDateRaw;
+  const workloadDays = positiveOr(lock?.workloadDays, 0);
+  return { id, orderId, lineId, startDate, endDate, workloadDays, seq: Number(lock?.seq ?? index) };
+}
+
+function resolveLineCapacity(line, date) {
+  if (Object.prototype.hasOwnProperty.call(line.capacityOverrides, date)) {
+    return positiveOr(line.capacityOverrides[date], line.baseCapacity);
+  }
+  return positiveOr(line.baseCapacity, 0);
+}
+
+function orderSortForReplan(a, b, remainingByOrder) {
+  const seqCmp = (Number(a.orderSeq) || 0) - (Number(b.orderSeq) || 0);
+  if (seqCmp !== 0) {
+    return seqCmp;
+  }
+  return String(a.orderNo).localeCompare(String(b.orderNo), "zh-Hans-CN");
+}
+
+function makeAllocation(orderId, lineId, date, workloadDays, source, lockId) {
+  return {
+    id: makeId("alloc"),
+    orderId,
+    lineId,
+    date,
+    workloadDays: round3(workloadDays),
+    source,
+    lockId: lockId || null
+  };
+}
+
 export function isoToday() {
   return toIsoDateFromUtc(new Date());
 }
@@ -46,11 +194,6 @@ export function addDays(dateText, offset) {
     return dateText;
   }
   return toIsoDateFromUtc(new Date(parsed.ts + Number(offset || 0) * DAY_MS));
-}
-
-function dayNumber(dateText) {
-  const parsed = parseIsoDate(dateText);
-  return parsed ? Math.round(parsed.ts / DAY_MS) : null;
 }
 
 export function compareDate(a, b) {
@@ -80,98 +223,23 @@ export function diffDays(laterDate, earlierDate) {
   return a - b;
 }
 
-function clampNumber(value, fallback = 0) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) {
-    return fallback;
-  }
-  return n;
-}
-
-function round3(value) {
-  return Math.round(value * 1000) / 1000;
-}
-
-function positiveOr(value, fallback = 0) {
-  return Math.max(0, round3(clampNumber(value, fallback)));
-}
-
-function integerInRange(value, fallback, min, max) {
-  const n = Math.round(clampNumber(value, fallback));
-  return Math.min(max, Math.max(min, n));
-}
-
-function makeId(prefix) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 export function buildDateRange(startDate, horizonDays) {
-  const safeDays = integerInRange(horizonDays, 30, 1, 120);
+  const safeDays = Math.max(1, Math.round(clampNumber(horizonDays, 30)));
   return Array.from({ length: safeDays }, (_, idx) => addDays(startDate, idx));
-}
-
-function normalizePriority(value) {
-  if (String(value || "").toUpperCase() === "URGENT") {
-    return "URGENT";
-  }
-  return "NORMAL";
-}
-
-function normalizeLine(line, index) {
-  const id = String(line?.id || makeId("line"));
-  const name = String(line?.name || "").trim() || `产线-${index + 1}`;
-  const baseCapacity = positiveOr(line?.baseCapacity, 1);
-  const enabled = line?.enabled !== false;
-  const capacityOverrides = {};
-  Object.entries(line?.capacityOverrides || {}).forEach(([dateKey, capacityValue]) => {
-    if (parseIsoDate(dateKey)) {
-      capacityOverrides[dateKey] = positiveOr(capacityValue, baseCapacity);
-    }
-  });
-  return { id, name, baseCapacity, capacityOverrides, enabled };
-}
-
-function normalizeOrder(order, index, horizonStart) {
-  const id = String(order?.id || makeId("order"));
-  const orderNo = String(order?.orderNo || "").trim() || `SO-${pad2(index + 1)}`;
-  const workloadDays = positiveOr(order?.workloadDays, 1);
-  const completedDays = Math.min(workloadDays, positiveOr(order?.completedDays, 0));
-  const dueDate = parseIsoDate(order?.dueDate) ? order.dueDate : addDays(horizonStart, 7);
-  const releaseDate = parseIsoDate(order?.releaseDate) ? order.releaseDate : horizonStart;
-  return {
-    id,
-    orderNo,
-    workloadDays,
-    completedDays,
-    dueDate,
-    releaseDate,
-    priority: normalizePriority(order?.priority)
-  };
-}
-
-function normalizeLock(lock, index, fallbackStart) {
-  const id = String(lock?.id || makeId("lock"));
-  const orderId = String(lock?.orderId || "");
-  const lineId = String(lock?.lineId || "");
-  const startDateRaw = parseIsoDate(lock?.startDate) ? lock.startDate : fallbackStart;
-  const endDateRaw = parseIsoDate(lock?.endDate) ? lock.endDate : startDateRaw;
-  const startDate = compareDate(startDateRaw, endDateRaw) <= 0 ? startDateRaw : endDateRaw;
-  const endDate = compareDate(startDateRaw, endDateRaw) <= 0 ? endDateRaw : startDateRaw;
-  const workloadDays = positiveOr(lock?.workloadDays, 0);
-  return { id, orderId, lineId, startDate, endDate, workloadDays, seq: Number(lock?.seq ?? index) };
 }
 
 export function createDefaultLiteScenario(baseDate = isoToday()) {
   const start = parseIsoDate(baseDate) ? baseDate : isoToday();
   return {
     schemaVersion: 1,
+    nextOrderSeq: 1,
     horizonStart: start,
     horizonDays: 30,
     lines: [
       {
         id: makeId("line"),
-        name: "导管产线-1",
-        baseCapacity: 1,
+        name: "导管产线",
+        baseCapacity: 300,
         capacityOverrides: {},
         enabled: true
       }
@@ -185,21 +253,51 @@ export function createDefaultLiteScenario(baseDate = isoToday()) {
 export function normalizeLiteScenario(input) {
   const fallback = createDefaultLiteScenario();
   const horizonStart = parseIsoDate(input?.horizonStart) ? input.horizonStart : fallback.horizonStart;
-  const horizonDays = integerInRange(input?.horizonDays, 30, 1, 120);
+  const horizonDays = Math.max(1, Math.round(clampNumber(input?.horizonDays, 30)));
 
   const lines = Array.isArray(input?.lines)
     ? input.lines.map((line, index) => normalizeLine(line, index)).filter((line) => line.id)
     : [];
   const safeLines = lines.length > 0 ? lines : fallback.lines;
+  const lineIdSet = new Set(safeLines.map((line) => line.id));
 
-  const orders = Array.isArray(input?.orders)
+  const rawOrders = Array.isArray(input?.orders)
     ? input.orders.map((order, index) => normalizeOrder(order, index, horizonStart))
     : [];
+  const orders = rawOrders.map((order) => {
+    const nextLineWorkloads = {};
+    Object.entries(order.lineWorkloads || {}).forEach(([lineId, value]) => {
+      if (lineIdSet.has(lineId) && value > EPSILON) {
+        nextLineWorkloads[lineId] = value;
+      }
+    });
+    const lineTotal = round3(Object.values(nextLineWorkloads).reduce((sum, value) => sum + value, 0));
+    const workloadDays = Math.max(order.workloadDays, lineTotal);
+    return {
+      ...order,
+      workloadDays,
+      completedDays: Math.min(workloadDays, order.completedDays),
+      lineWorkloads: nextLineWorkloads
+    };
+  });
+  const inferredNextOrderSeq = inferNextOrderSeq(orders);
+  const nextOrderSeqRaw = Number(input?.nextOrderSeq);
+  const nextOrderSeq = Number.isFinite(nextOrderSeqRaw)
+    ? Math.max(1, Math.round(nextOrderSeqRaw))
+    : inferredNextOrderSeq;
 
+  const orderIdSet = new Set(orders.map((order) => order.id));
   const locks = Array.isArray(input?.locks)
     ? input.locks
         .map((lock, index) => normalizeLock(lock, index, horizonStart))
-        .filter((lock) => lock.workloadDays > EPSILON && lock.orderId && lock.lineId)
+        .filter(
+          (lock) =>
+            lock.workloadDays > EPSILON &&
+            lock.orderId &&
+            lock.lineId &&
+            orderIdSet.has(lock.orderId) &&
+            lineIdSet.has(lock.lineId)
+        )
     : [];
 
   const simulationLogs = Array.isArray(input?.simulationLogs)
@@ -214,6 +312,7 @@ export function normalizeLiteScenario(input) {
 
   return {
     schemaVersion: 1,
+    nextOrderSeq,
     horizonStart,
     horizonDays,
     lines: safeLines,
@@ -223,51 +322,19 @@ export function normalizeLiteScenario(input) {
   };
 }
 
-function resolveLineCapacity(line, date) {
-  if (Object.prototype.hasOwnProperty.call(line.capacityOverrides, date)) {
-    return positiveOr(line.capacityOverrides[date], line.baseCapacity);
-  }
-  return positiveOr(line.baseCapacity, 0);
-}
-
-function orderSortForReplan(a, b, remainingByOrder) {
-  const dueCmp = compareDate(a.dueDate, b.dueDate);
-  if (dueCmp !== 0) {
-    return dueCmp;
-  }
-  if (a.priority !== b.priority) {
-    return a.priority === "URGENT" ? -1 : 1;
-  }
-  const remainingCmp = (remainingByOrder[b.id] || 0) - (remainingByOrder[a.id] || 0);
-  if (Math.abs(remainingCmp) > EPSILON) {
-    return remainingCmp;
-  }
-  return String(a.orderNo).localeCompare(String(b.orderNo), "zh-Hans-CN");
-}
-
-function makeAllocation(orderId, lineId, date, workloadDays, source, lockId) {
-  return {
-    id: makeId("alloc"),
-    orderId,
-    lineId,
-    date,
-    workloadDays: round3(workloadDays),
-    source,
-    lockId: lockId || null
-  };
-}
-
 export function buildLiteSchedule(inputScenario) {
   const scenario = normalizeLiteScenario(inputScenario);
   const dates = buildDateRange(scenario.horizonStart, scenario.horizonDays);
   const lines = scenario.lines.filter((line) => line.enabled !== false);
   const orders = scenario.orders;
+  const lineSet = new Set(lines.map((line) => line.id));
 
   const warnings = [];
   const allocations = [];
   const lineCapByDate = {};
   const lineRemainingCap = {};
   const orderRemaining = {};
+  const orderLineRemaining = {};
 
   lines.forEach((line) => {
     lineCapByDate[line.id] = {};
@@ -280,8 +347,47 @@ export function buildLiteSchedule(inputScenario) {
   });
 
   orders.forEach((order) => {
-    orderRemaining[order.id] = Math.max(0, round3(order.workloadDays - order.completedDays));
+    const remaining = Math.max(0, round3(order.workloadDays - order.completedDays));
+    orderRemaining[order.id] = remaining;
+
+    const requested = {};
+    Object.entries(order.lineWorkloads || {}).forEach(([lineId, qty]) => {
+      if (!lineSet.has(lineId)) {
+        warnings.push(`订单 ${order.orderNo} 指定的产线 ${lineId} 不存在，已忽略。`);
+        return;
+      }
+      if (qty > EPSILON) {
+        requested[lineId] = qty;
+      }
+    });
+
+    const requestedTotal = round3(Object.values(requested).reduce((sum, value) => sum + value, 0));
+    const ratio = requestedTotal > EPSILON && remaining > EPSILON ? Math.min(1, remaining / requestedTotal) : 0;
+
+    const normalized = {};
+    Object.entries(requested).forEach(([lineId, qty]) => {
+      const value = round3(qty * ratio);
+      if (value > EPSILON) {
+        normalized[lineId] = value;
+      }
+    });
+    orderLineRemaining[order.id] = normalized;
   });
+
+  function reduceLineRequirement(orderId, lineId, qty) {
+    const safeQty = positiveOr(qty, 0);
+    if (safeQty <= EPSILON) {
+      return;
+    }
+    const map = orderLineRemaining[orderId];
+    if (!map || !Object.prototype.hasOwnProperty.call(map, lineId)) {
+      return;
+    }
+    map[lineId] = round3((map[lineId] || 0) - safeQty);
+    if (map[lineId] <= EPSILON) {
+      delete map[lineId];
+    }
+  }
 
   function allocateOne(orderId, lineId, date, wanted, source, lockId = null) {
     const remainOrder = orderRemaining[orderId] ?? 0;
@@ -306,7 +412,7 @@ export function buildLiteSchedule(inputScenario) {
   });
 
   sortedLocks.forEach((lock) => {
-    if (!orderRemaining.hasOwnProperty(lock.orderId)) {
+    if (!Object.prototype.hasOwnProperty.call(orderRemaining, lock.orderId)) {
       warnings.push(`锁定片段 ${lock.id} 对应订单不存在，已跳过。`);
       return;
     }
@@ -314,6 +420,7 @@ export function buildLiteSchedule(inputScenario) {
       warnings.push(`锁定片段 ${lock.id} 对应产线不存在，已跳过。`);
       return;
     }
+
     const lockDates = dates.filter(
       (date) => compareDate(date, lock.startDate) >= 0 && compareDate(date, lock.endDate) <= 0
     );
@@ -328,17 +435,18 @@ export function buildLiteSchedule(inputScenario) {
         return;
       }
       const done = allocateOne(lock.orderId, lock.lineId, date, left, "LOCKED", lock.id);
+      reduceLineRequirement(lock.orderId, lock.lineId, done);
       left = round3(left - done);
     });
 
-    if (left > EPSILON) {
-      warnings.push(`锁定片段 ${lock.id} 仍有 ${left} 天未落地（容量不足或超出范围）。`);
-    }
+    // 用户在 lite 模式下不需要“未落地锁定片段”提醒，这里静默处理剩余量。
   });
 
   dates.forEach((date) => {
-    const lineIds = lines.map((line) => line.id).filter((lineId) => (lineRemainingCap[lineId]?.[date] || 0) > EPSILON);
-    if (lineIds.length === 0) {
+    const activeLineIds = lines
+      .map((line) => line.id)
+      .filter((lineId) => (lineRemainingCap[lineId]?.[date] || 0) > EPSILON);
+    if (activeLineIds.length === 0) {
       return;
     }
 
@@ -354,11 +462,25 @@ export function buildLiteSchedule(inputScenario) {
     }
 
     candidates.forEach((order) => {
+      const lineReq = orderLineRemaining[order.id] || {};
+      Object.entries(lineReq)
+        .filter(([, qty]) => qty > EPSILON)
+        .sort((a, b) => b[1] - a[1])
+        .forEach(([lineId, qty]) => {
+          if (!lineRemainingCap[lineId]) {
+            return;
+          }
+          const done = allocateOne(order.id, lineId, date, qty, "AUTO_LINE");
+          reduceLineRequirement(order.id, lineId, done);
+        });
+    });
+
+    candidates.forEach((order) => {
       let left = orderRemaining[order.id] || 0;
       if (left <= EPSILON) {
         return;
       }
-      const dynamicLines = lineIds.slice().sort((a, b) => {
+      const dynamicLines = activeLineIds.slice().sort((a, b) => {
         return (lineRemainingCap[b]?.[date] || 0) - (lineRemainingCap[a]?.[date] || 0);
       });
       dynamicLines.forEach((lineId) => {
@@ -404,14 +526,15 @@ export function buildLiteSchedule(inputScenario) {
     });
   });
 
-  const nominalDailyCapacity = dates.reduce((sum, date) => {
-    return (
-      sum +
-      lines.reduce((lineSum, line) => {
-        return lineSum + (lineCapByDate[line.id]?.[date] || 0);
-      }, 0)
-    );
-  }, 0) / Math.max(dates.length, 1);
+  const nominalDailyCapacity =
+    dates.reduce((sum, date) => {
+      return (
+        sum +
+        lines.reduce((lineSum, line) => {
+          return lineSum + (lineCapByDate[line.id]?.[date] || 0);
+        }, 0)
+      );
+    }, 0) / Math.max(dates.length, 1);
 
   const orderRows = orders.map((order) => {
     const remaining = orderRemaining[order.id] || 0;
@@ -434,26 +557,26 @@ export function buildLiteSchedule(inputScenario) {
       completionDate = addDays(dates[dates.length - 1], Math.ceil(remaining / nominalDailyCapacity));
     }
 
-    const delayDays = completionDate ? Math.max(0, diffDays(completionDate, order.dueDate)) : null;
-    const lockedQty = orderLockedTotals[order.id] || 0;
-    const autoQty = orderAutoTotals[order.id] || 0;
-
-    let reason = "按交期最小延期优先进行自动重排。";
-    if (lockedQty > EPSILON && autoQty > EPSILON) {
-      reason = "包含手动锁定区间，剩余工作量按交期优先自动补齐。";
-    } else if (lockedQty > EPSILON) {
-      reason = "当前分配主要来自手动锁定区间。";
+    const hasLinePreference =
+      Object.values(order.lineWorkloads || {}).reduce((sum, value) => sum + value, 0) > EPSILON;
+    const reasonParts = [];
+    if (hasLinePreference) {
+      reasonParts.push("先满足指定产线工作量");
     }
+    if ((orderLockedTotals[order.id] || 0) > EPSILON) {
+      reasonParts.push("手动锁定优先");
+    }
+    reasonParts.push("其余按订单顺序向后排产");
 
     return {
       ...order,
       scheduledDays: round3(order.workloadDays - remaining - order.completedDays),
-      autoScheduledDays: round3(autoQty),
-      lockedScheduledDays: round3(lockedQty),
+      autoScheduledDays: round3(orderAutoTotals[order.id] || 0),
+      lockedScheduledDays: round3(orderLockedTotals[order.id] || 0),
       remainingDays: round3(remaining),
       completionDate,
-      delayDays,
-      reason
+      delayDays: completionDate ? Math.max(0, diffDays(completionDate, order.dueDate)) : null,
+      reason: `${reasonParts.join("，")}。`
     };
   });
 
@@ -496,10 +619,8 @@ export function buildLiteSchedule(inputScenario) {
   );
   const totalAssigned = round3(allocations.reduce((sum, item) => sum + item.workloadDays, 0));
   const delayedOrders = orderRows.filter((row) => Number(row.delayDays) > 0).length;
-  const bottleneck = lineRows
-    .slice()
-    .sort((a, b) => b.utilization - a.utilization)[0];
   const totalRemaining = round3(Object.values(orderRemaining).reduce((sum, value) => sum + value, 0));
+  const bottleneck = lineRows.slice().sort((a, b) => b.utilization - a.utilization)[0];
 
   return {
     scenario,

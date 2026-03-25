@@ -101,24 +101,26 @@ describe("liteSchedulerEngine", () => {
     expect(nextLock?.workloadDays).toBeCloseTo(2, 6);
   });
 
-  it("prioritizes earlier due date under constrained capacity", () => {
+  it("prioritizes earlier order sequence under constrained capacity", () => {
     const scenario = normalizeLiteScenario({
       horizonStart: "2026-03-25",
       horizonDays: 2,
       lines: [{ id: "L1", name: "Line-1", baseCapacity: 1 }],
       orders: [
         {
-          id: "EARLY",
-          orderNo: "EARLY",
+          id: "SECOND",
+          orderNo: "PO-0002",
+          orderSeq: 2,
           workloadDays: 1,
           completedDays: 0,
           dueDate: "2026-03-25",
           releaseDate: "2026-03-25",
-          priority: "NORMAL"
+          priority: "URGENT"
         },
         {
-          id: "LATE",
-          orderNo: "LATE",
+          id: "FIRST",
+          orderNo: "PO-0001",
+          orderSeq: 1,
           workloadDays: 1,
           completedDays: 0,
           dueDate: "2026-03-26",
@@ -131,6 +133,51 @@ describe("liteSchedulerEngine", () => {
 
     const plan = buildLiteSchedule(scenario);
     const dayOneAllocation = plan.allocations.find((item) => item.date === "2026-03-25");
-    expect(dayOneAllocation?.orderId).toBe("EARLY");
+    expect(dayOneAllocation?.orderId).toBe("FIRST");
+  });
+
+  it("honors line-specific workload assignments from order input", () => {
+    const scenario = normalizeLiteScenario({
+      horizonStart: "2026-03-25",
+      horizonDays: 2,
+      lines: [
+        { id: "L1", name: "Line-1", baseCapacity: 1 },
+        { id: "L2", name: "Line-2", baseCapacity: 1 }
+      ],
+      orders: [
+        {
+          id: "O1",
+          orderNo: "ORD-LINE",
+          workloadDays: 1,
+          completedDays: 0,
+          dueDate: "2026-03-26",
+          releaseDate: "2026-03-25",
+          priority: "NORMAL",
+          lineWorkloads: {
+            L2: 1
+          }
+        }
+      ],
+      locks: []
+    });
+
+    const plan = buildLiteSchedule(scenario);
+    const dayOne = plan.allocations.find((item) => item.date === "2026-03-25");
+    expect(dayOne?.orderId).toBe("O1");
+    expect(dayOne?.lineId).toBe("L2");
+  });
+
+  it("does not cap horizon days at 120", () => {
+    const scenario = normalizeLiteScenario({
+      horizonStart: "2026-03-25",
+      horizonDays: 150,
+      lines: [{ id: "L1", name: "Line-1", baseCapacity: 1 }],
+      orders: [],
+      locks: []
+    });
+
+    const plan = buildLiteSchedule(scenario);
+    expect(plan.dates).toHaveLength(150);
+    expect(plan.summary.horizonEnd).toBe("2026-08-21");
   });
 });
