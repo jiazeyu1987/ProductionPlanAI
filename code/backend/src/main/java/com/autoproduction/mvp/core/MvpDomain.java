@@ -26,6 +26,8 @@ final class MvpDomain {
     List<ResourceRow> initialMachineOccupancy = new ArrayList<>();
     List<MaterialRow> materialAvailability = new ArrayList<>();
     List<Order> orders = new ArrayList<>();
+    List<LineProcessBinding> lineProcessBindings = new ArrayList<>();
+    List<SectionLeaderBinding> sectionLeaderBindings = new ArrayList<>();
 
     List<ScheduleVersion> schedules = new ArrayList<>();
     String publishedVersionNo;
@@ -249,6 +251,47 @@ final class MvpDomain {
       this.productCode = productCode;
       this.processCode = processCode;
       this.availableQty = availableQty;
+    }
+  }
+
+  static final class LineProcessBinding {
+    String workshopCode;
+    String lineCode;
+    String lineName;
+    String processCode;
+    boolean enabled;
+
+    LineProcessBinding(
+      String workshopCode,
+      String lineCode,
+      String lineName,
+      String processCode,
+      boolean enabled
+    ) {
+      this.workshopCode = workshopCode;
+      this.lineCode = lineCode;
+      this.lineName = lineName;
+      this.processCode = processCode;
+      this.enabled = enabled;
+    }
+  }
+
+  static final class SectionLeaderBinding {
+    String leaderId;
+    String leaderName;
+    String lineCode;
+    boolean active;
+
+    SectionLeaderBinding(
+      String leaderId,
+      String leaderName,
+      String lineCode,
+      boolean active
+    ) {
+      this.leaderId = leaderId;
+      this.leaderName = leaderName;
+      this.lineCode = lineCode;
+      this.active = active;
     }
   }
 

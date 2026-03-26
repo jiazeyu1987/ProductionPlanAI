@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import LiteSchedulerPage from "./LiteSchedulerPage";
 
@@ -13,12 +19,16 @@ describe("LiteSchedulerPage", () => {
 
   it("renders and opens order modal with all configured lines", () => {
     render(<LiteSchedulerPage />);
-    expect(screen.getByRole("heading", { name: "璞慧排产" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "璞慧排产" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("open-order-modal")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-order-modal"));
     expect(screen.getByTestId("order-modal")).toBeInTheDocument();
-    expect(screen.getAllByTestId(/^order-line-days-/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId(/^order-line-days-/).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("adds an order through modal and supports one-day advance", async () => {
@@ -26,19 +36,118 @@ describe("LiteSchedulerPage", () => {
 
     fireEvent.click(screen.getByTestId("open-order-modal"));
     fireEvent.change(screen.getByTestId("order-no-input"), {
-      target: { value: "TEST-001" }
+      target: { value: "TEST-001" },
     });
 
     const firstLineInput = screen.getAllByTestId(/^order-line-days-/)[0];
     fireEvent.change(firstLineInput, {
-      target: { value: "1" }
+      target: { value: "1" },
     });
 
     fireEvent.click(screen.getByTestId("submit-order-modal"));
-    expect(screen.getByText("TEST-001", { selector: "td" })).toBeInTheDocument();
+    expect(
+      screen.getByText("TEST-001", { selector: "td" }),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("advance-day-btn"));
     expect(await screen.findByText(/已推进到/)).toBeInTheDocument();
+  });
+
+  it("supports skipping statutory holidays and persists toggle state", async () => {
+    const view = render(<LiteSchedulerPage />);
+
+    const startInput = screen.getByTestId("horizon-start-input");
+    fireEvent.change(startInput, { target: { value: "2026-09-30" } });
+    expect(startInput).toHaveValue("2026-09-30");
+
+    const toggle = screen.getByTestId("skip-holidays-toggle");
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    const hint = screen.getByTestId("holiday-years-hint");
+    expect(hint).toHaveTextContent("2026");
+    expect(hint).toHaveTextContent("2027");
+    expect(hint).toHaveTextContent("2028");
+    expect(hint).not.toHaveTextContent("2024");
+    expect(hint).not.toHaveTextContent("2025");
+
+    fireEvent.click(screen.getByTestId("advance-day-btn"));
+    expect(await screen.findByText(/已推进到 2026-10-08/)).toBeInTheDocument();
+    expect(screen.getByTestId("horizon-start-input")).toHaveValue("2026-10-08");
+
+    view.unmount();
+    render(<LiteSchedulerPage />);
+    expect(screen.getByTestId("skip-holidays-toggle")).toBeChecked();
+  });
+
+  it("supports weekend mode NONE/SINGLE/DOUBLE", async () => {
+    render(<LiteSchedulerPage />);
+
+    const startInput = screen.getByTestId("horizon-start-input");
+    fireEvent.change(startInput, { target: { value: "2026-03-27" } });
+    expect(startInput).toHaveValue("2026-03-27");
+
+    fireEvent.click(screen.getByTestId("skip-holidays-toggle"));
+
+    fireEvent.click(screen.getByTestId("weekend-mode-none"));
+    fireEvent.click(screen.getByTestId("advance-day-btn"));
+    expect(await screen.findByText(/已推进到 2026-03-28/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("weekend-mode-single"));
+    fireEvent.click(screen.getByTestId("advance-day-btn"));
+    expect(await screen.findByText(/已推进到 2026-03-30/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByTestId("horizon-start-input"), {
+      target: { value: "2026-03-27" },
+    });
+    fireEvent.click(screen.getByTestId("weekend-mode-double"));
+    fireEvent.click(screen.getByTestId("advance-day-btn"));
+    expect(await screen.findByText(/已推进到 2026-03-30/)).toBeInTheDocument();
+  });
+
+  it("supports clicking calendar to set rest or schedule", async () => {
+    render(<LiteSchedulerPage />);
+
+    fireEvent.change(screen.getByTestId("horizon-start-input"), {
+      target: { value: "2026-03-27" },
+    });
+    fireEvent.click(screen.getByTestId("skip-holidays-toggle"));
+    fireEvent.click(screen.getByTestId("lite-tab-schedule"));
+    fireEvent.change(screen.getByTestId("calendar-month-input"), {
+      target: { value: "2026-03" },
+    });
+
+    const day27Before = screen.getByTestId("calendar-day-2026-03-27");
+    expect(
+      within(day27Before).getByTestId("calendar-toggle-2026-03-27"),
+    ).toHaveTextContent("休息");
+    fireEvent.click(
+      within(day27Before).getByTestId("calendar-toggle-2026-03-27"),
+    );
+    expect(
+      await screen.findByText(/2026-03-27 已设为休息/),
+    ).toBeInTheDocument();
+
+    const day27After = screen.getByTestId("calendar-day-2026-03-27");
+    expect(
+      within(day27After).getByTestId("calendar-toggle-2026-03-27"),
+    ).toHaveTextContent("排产");
+
+    const day28Before = screen.getByTestId("calendar-day-2026-03-28");
+    expect(
+      within(day28Before).getByTestId("calendar-toggle-2026-03-28"),
+    ).toHaveTextContent("排产");
+    fireEvent.click(
+      within(day28Before).getByTestId("calendar-toggle-2026-03-28"),
+    );
+    expect(
+      await screen.findByText(/2026-03-28 已设为排产/),
+    ).toBeInTheDocument();
+
+    const day28After = screen.getByTestId("calendar-day-2026-03-28");
+    expect(
+      within(day28After).getByTestId("calendar-toggle-2026-03-28"),
+    ).toHaveTextContent("休息");
   });
 
   it("supports editing and deleting an order", () => {
@@ -46,29 +155,35 @@ describe("LiteSchedulerPage", () => {
 
     fireEvent.click(screen.getByTestId("open-order-modal"));
     fireEvent.change(screen.getByTestId("order-no-input"), {
-      target: { value: "EDIT-ME" }
+      target: { value: "EDIT-ME" },
     });
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
-      target: { value: "2" }
+      target: { value: "2" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
 
-    const oldRow = screen.getByText("EDIT-ME", { selector: "td" }).closest("tr");
+    const oldRow = screen
+      .getByText("EDIT-ME", { selector: "td" })
+      .closest("tr");
     expect(oldRow).not.toBeNull();
     fireEvent.click(within(oldRow).getByRole("button", { name: "编辑" }));
 
     fireEvent.change(screen.getByTestId("order-no-input"), {
-      target: { value: "EDITED-ORDER" }
+      target: { value: "EDITED-ORDER" },
     });
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
-      target: { value: "1.5" }
+      target: { value: "1.5" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
 
-    expect(screen.getByText("EDITED-ORDER", { selector: "td" })).toBeInTheDocument();
+    expect(
+      screen.getByText("EDITED-ORDER", { selector: "td" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("EDIT-ME", { selector: "td" })).toBeNull();
 
-    const editedRow = screen.getByText("EDITED-ORDER", { selector: "td" }).closest("tr");
+    const editedRow = screen
+      .getByText("EDITED-ORDER", { selector: "td" })
+      .closest("tr");
     expect(editedRow).not.toBeNull();
     fireEvent.click(within(editedRow).getByRole("button", { name: "删除" }));
 
@@ -80,14 +195,14 @@ describe("LiteSchedulerPage", () => {
 
     fireEvent.click(screen.getByTestId("open-order-modal"));
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
-      target: { value: "1" }
+      target: { value: "1" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
     expect(screen.getByText("PO-0001", { selector: "td" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("open-order-modal"));
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
-      target: { value: "1" }
+      target: { value: "1" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
     expect(screen.getByText("PO-0002", { selector: "td" })).toBeInTheDocument();
@@ -125,25 +240,27 @@ describe("LiteSchedulerPage", () => {
 
     fireEvent.click(screen.getByTestId("lite-tab-schedule"));
     fireEvent.change(screen.getByTestId("calendar-month-input"), {
-      target: { value: "2026-03" }
+      target: { value: "2026-03" },
     });
 
     fireEvent.click(screen.getByTestId("lite-tab-orders"));
     fireEvent.click(screen.getByTestId("open-order-modal"));
     fireEvent.change(screen.getByTestId("order-no-input"), {
-      target: { value: "CAL-001" }
+      target: { value: "CAL-001" },
     });
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
-      target: { value: "1" }
+      target: { value: "1" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
 
     fireEvent.click(screen.getByTestId("lite-tab-schedule"));
     fireEvent.change(screen.getByTestId("calendar-month-input"), {
-      target: { value: "2026-03" }
+      target: { value: "2026-03" },
     });
     const matches = screen.getAllByText(/CAL-001/);
-    expect(matches.some((node) => node.closest(".lite-cal-line-orders"))).toBe(true);
+    expect(matches.some((node) => node.closest(".lite-cal-line-orders"))).toBe(
+      true,
+    );
   });
 
   it("supports one-click replan from today", () => {
@@ -161,7 +278,9 @@ describe("LiteSchedulerPage", () => {
 
     fireEvent.click(screen.getByTestId("replan-today-btn"));
     expect(screen.getByTestId("horizon-start-input")).toHaveValue(todayIso);
-    expect(screen.getByText(new RegExp(`已从今天 ${todayIso} 开始重排`))).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`已从今天 ${todayIso} 开始重排`)),
+    ).toBeInTheDocument();
   });
 
   it("supports local snapshot save, rename, load and delete", () => {
@@ -173,7 +292,7 @@ describe("LiteSchedulerPage", () => {
     fireEvent.click(screen.getByTestId("save-snapshot-btn"));
     expect(screen.getByTestId("snapshot-modal")).toBeInTheDocument();
     fireEvent.change(screen.getByTestId("snapshot-name-input"), {
-      target: { value: "测试场景A" }
+      target: { value: "测试场景A" },
     });
     fireEvent.click(screen.getByTestId("snapshot-save-confirm-btn"));
     expect(screen.getByText(/场景已保存：测试场景A/)).toBeInTheDocument();

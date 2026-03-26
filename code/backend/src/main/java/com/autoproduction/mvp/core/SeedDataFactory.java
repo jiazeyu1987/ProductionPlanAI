@@ -42,6 +42,21 @@ final class SeedDataFactory {
       )
     );
 
+    state.lineProcessBindings = List.of(
+      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_TUBE", true),
+      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_ASSEMBLY", true),
+      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_BALLOON", true),
+      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_ASSEMBLY", true),
+      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-STENT-1", "支架一线", "PROC_STENT", true),
+      new MvpDomain.LineProcessBinding("WS-STERILE", "LINE-STERILE-1", "灭菌一线", "PROC_STERILE", true)
+    );
+    state.sectionLeaderBindings = List.of(
+      new MvpDomain.SectionLeaderBinding("LEADER-01", "张工", "LINE-CATH-1", true),
+      new MvpDomain.SectionLeaderBinding("LEADER-01", "张工", "LINE-BALLOON-1", true),
+      new MvpDomain.SectionLeaderBinding("LEADER-02", "李工", "LINE-STENT-1", true),
+      new MvpDomain.SectionLeaderBinding("LEADER-03", "王工", "LINE-STERILE-1", true)
+    );
+
     state.shiftCalendar = buildShiftCalendar(state.startDate, state.horizonDays, state.shiftsPerDay);
     state.workerPools = buildResource(state.startDate, state.horizonDays, state.shiftsPerDay, Map.of(
       "PROC_TUBE", 8, "PROC_ASSEMBLY", 10, "PROC_BALLOON", 8, "PROC_STENT", 9, "PROC_STERILE", 6

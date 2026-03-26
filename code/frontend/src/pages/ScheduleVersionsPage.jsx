@@ -4,14 +4,14 @@ import { loadList, postContract } from "../services/api";
 import { formatDateTimeByField } from "../utils/datetime";
 
 const STATUS_CN = {
-  DRAFT: "鑽夌",
+  DRAFT: "草稿",
   PUBLISHED: "已发布",
   SUPERSEDED: "已替代",
   ROLLED_BACK: "已回滚"
 };
 
 const RULE_VERSION_CN = {
-  "RULE-P0-BASE": "P0鍩虹瑙勫垯"
+  "RULE-P0-BASE": "P0基础规则"
 };
 
 const STRATEGY_LABEL = {
@@ -59,22 +59,22 @@ function taskKey(row) {
 
 function changeType(baseQty, currentQty) {
   if (Math.abs(baseQty) < 1e-9 && Math.abs(currentQty) >= 1e-9) {
-    return "鏂板";
+    return "新增";
   }
   if (Math.abs(baseQty) >= 1e-9 && Math.abs(currentQty) < 1e-9) {
-    return "绉婚櫎";
+    return "移除";
   }
-  return currentQty > baseQty ? "澧炲姞" : "鍑忓皯";
+  return currentQty > baseQty ? "增加" : "减少";
 }
 
 function changeTypeClass(type) {
-  if (type === "鏂板") {
+  if (type === "新增") {
     return "diff-tag diff-tag-new";
   }
-  if (type === "绉婚櫎") {
+  if (type === "移除") {
     return "diff-tag diff-tag-removed";
   }
-  if (type === "澧炲姞") {
+  if (type === "增加") {
     return "diff-tag diff-tag-up";
   }
   return "diff-tag diff-tag-down";
@@ -148,7 +148,7 @@ function formatPercent(value) {
 
 function reasonToText(reasonCode) {
   if (reasonCode === "CAPACITY_LIMIT") {
-    return "褰撳墠鐝鍙敤浜ц兘涓嶈冻锛堜汉鍔?璁惧/鐗╂枡鎴栫彮娆″閲忓彈闄愶級";
+    return "当前班次可用产能不足（人力/设备/物料或班次容量受限）";
   }
   if (reasonCode === "DEPENDENCY_LIMIT") {
     return "受前序工序约束，后序暂时不能继续排。";
@@ -305,7 +305,7 @@ export default function ScheduleVersionsPage() {
       operator: "publisher01",
       reason: "MVP publish"
     });
-    setMessage(`宸插彂甯冪増鏈細${versionNo}`);
+    setMessage(`已发布版本：${versionNo}`);
     await refresh();
   }
 
@@ -314,7 +314,7 @@ export default function ScheduleVersionsPage() {
       operator: "publisher01",
       reason: "MVP rollback simulation"
     });
-    setMessage(`宸插洖婊氬埌 ${versionNo}`);
+    setMessage(`已回滚到 ${versionNo}`);
     await refresh();
   }
 
@@ -368,14 +368,14 @@ export default function ScheduleVersionsPage() {
 
   return (
     <section>
-      <h2>鎺掍骇鍘嗗彶</h2>
+      <h2>排产历史</h2>
       <div className="toolbar">
         <label>
           <input type="checkbox" checked={showDraft} onChange={(e) => setShowDraft(e.target.checked)} />
-          鏄剧ず鑽夌
+          显示草稿
         </label>
         <select value={compareWith} onChange={(e) => setCompareWith(e.target.value)}>
-          <option value="">閫夋嫨瀵规瘮鍩虹嚎</option>
+          <option value="">选择对比基线</option>
           {visibleRows.map((row) => (
             <option key={row.version_no} value={row.version_no}>
               {row.version_no}
@@ -394,20 +394,20 @@ export default function ScheduleVersionsPage() {
           },
           {
             key: "rule_version_no",
-            title: "瑙勫垯鐗堟湰",
+            title: "规则版本",
             render: (value, row) => row.rule_version_name_cn || RULE_VERSION_CN[value] || value || "-"
           },
           { key: "created_by", title: "创建人" },
-          { key: "created_at", title: "鍒涘缓鏃堕棿" },
+          { key: "created_at", title: "创建时间" },
           {
             key: "actions",
-            title: "鎿嶄綔",
+            title: "操作",
             render: (_, row) => (
               <div className="row-actions">
-                <button onClick={() => compare(row.version_no).catch(() => {})}>宸紓</button>
-                <button onClick={() => showAlgorithm(row.version_no).catch(() => {})}>绠楁硶</button>
-                <button onClick={() => publish(row.version_no).catch(() => {})}>鍙戝竷</button>
-                <button onClick={() => rollback(row.version_no).catch(() => {})}>鍥炴粴</button>
+                <button onClick={() => compare(row.version_no).catch(() => {})}>差异</button>
+                <button onClick={() => showAlgorithm(row.version_no).catch(() => {})}>算法</button>
+                <button onClick={() => publish(row.version_no).catch(() => {})}>发布</button>
+                <button onClick={() => rollback(row.version_no).catch(() => {})}>回滚</button>
               </div>
             )
           }
@@ -431,11 +431,11 @@ export default function ScheduleVersionsPage() {
                 <strong>{diff.affectedOrders}</strong>
               </article>
               <article className="metric-card">
-                <span>璁㈠崟鍑哄叆鍙樺寲</span>
+                <span>订单出入变化</span>
                 <strong>{diff.summary.changed_order_count ?? 0}</strong>
               </article>
               <article className="metric-card">
-                <span>璁″垝閲忓噣鍙樺寲</span>
+                <span>计划量净变化</span>
                 <strong>{formatSignedQty(diff.netDeltaQty)}</strong>
               </article>
             </div>
@@ -449,10 +449,10 @@ export default function ScheduleVersionsPage() {
             <h3>差异明细</h3>
             <SimpleTable
               columns={[
-                { key: "order_no", title: "鐢熶骇璁㈠崟" },
-                { key: "process_name", title: "宸ュ簭" },
-                { key: "calendar_date", title: "鏃ユ湡" },
-                { key: "shift_name", title: "鐝" },
+                { key: "order_no", title: "生产订单" },
+                { key: "process_name", title: "工序" },
+                { key: "calendar_date", title: "日期" },
+                { key: "shift_name", title: "班次" },
                 { key: "base_qty", title: "基线计划量", render: (value) => formatQty(value) },
                 { key: "current_qty", title: "当前计划量", render: (value) => formatQty(value) },
                 {
@@ -471,7 +471,7 @@ export default function ScheduleVersionsPage() {
           </div>
 
           <details className="json-box">
-            <summary>鏌ョ湅鍘熷鏁版嵁锛堥珮绾э級</summary>
+            <summary>查看原始数据（高级）</summary>
             <pre>{JSON.stringify(formatDiffForView(diff.summary), null, 2)}</pre>
           </details>
         </>
@@ -499,9 +499,9 @@ export default function ScheduleVersionsPage() {
           <h4>优先级队列预览</h4>
           <SimpleTable
             columns={[
-              { key: "order_no", title: "鐢熶骇璁㈠崟" },
+              { key: "order_no", title: "生产订单" },
               { key: "urgent_flag", title: "加急", render: (value) => (Number(value) === 1 ? "是" : "否") },
-              { key: "due_date", title: "浜ゆ湡" },
+              { key: "due_date", title: "交期" },
               { key: "status_name_cn", title: "当前状态" }
             ]}
             rows={(algorithmDetail.priority_preview ?? []).slice(0, 8)}
@@ -510,7 +510,7 @@ export default function ScheduleVersionsPage() {
           <h4>工序分配概览</h4>
           <SimpleTable
             columns={[
-              { key: "process_name_cn", title: "宸ュ簭" },
+              { key: "process_name_cn", title: "工序" },
               {
                 key: "max_allocation_qty",
                 title: "最大配量",
@@ -540,10 +540,10 @@ export default function ScheduleVersionsPage() {
               <h4>最大配量说明（{selectedMaxAllocationRow.process_name_cn || selectedMaxAllocationRow.process_code || "-" }）</h4>
               <p className="notice">{maxAllocationExplainToText(selectedMaxAllocationRow)}</p>
               <p className="hint">
-                宄板€艰鍗曪細{selectedMaxAllocationRow.max_allocation_order_no || "-"}锛涘嘲鍊肩彮娆★細
+                峰值订单：{selectedMaxAllocationRow.max_allocation_order_no || "-"}；峰值班次：
                 {selectedMaxAllocationRow.max_allocation_date || "-"}
                 {selectedMaxAllocationRow.max_allocation_shift_name_cn || selectedMaxAllocationRow.max_allocation_shift_code || ""}
-                锛涘伐搴忓嘲鍊硷細{formatQty(selectedMaxAllocationRow.max_allocation_qty)}
+                ；工序峰值：{formatQty(selectedMaxAllocationRow.max_allocation_qty)}
               </p>
             </>
           ) : (
@@ -570,7 +570,7 @@ export default function ScheduleVersionsPage() {
                   { key: "remaining_qty", title: "未排数量", render: (value) => formatQty(value) },
                   {
                     key: "reasons",
-                    title: "璇存槑",
+                    title: "说明",
                     render: (value) =>
                       Array.isArray(value) && value.length > 0 ? value.map((item) => reasonToText(item)).join("；") : "-"
                   }

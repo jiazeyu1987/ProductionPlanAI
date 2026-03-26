@@ -110,7 +110,9 @@ h2 {
   display: block;
   color: inherit;
   text-decoration: none;
-  transition: border-color 0.15s ease, transform 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .metric-card-link:hover {
@@ -128,6 +130,109 @@ h2 {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.lite-top-toolbar {
+  align-items: center;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border: 1px solid #d6dfd8;
+  border-radius: 12px;
+  background: linear-gradient(115deg, #eef5f0 0%, #f8fbf9 75%, #fff 100%);
+}
+
+.lite-toolbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border: 1px solid #d4ddd6;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.lite-toolbar-label {
+  font-weight: 600;
+  color: #2a4638;
+  white-space: nowrap;
+}
+
+.lite-toolbar-field input[type="date"] {
+  min-width: 132px;
+  padding: 6px 8px;
+  background: #f7faf8;
+}
+
+.toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.toolbar-choice-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid #d4ddd6;
+  border-radius: 10px;
+  padding: 5px 8px;
+  background: #fff;
+}
+
+.lite-toolbar-subtitle {
+  margin-right: 2px;
+}
+
+.lite-pill-check {
+  padding: 5px 8px;
+  border: 1px solid #d4ddd6;
+  border-radius: 9px;
+  background: #fff;
+  line-height: 1;
+}
+
+.lite-pill-check.is-active {
+  border-color: #7db59d;
+  background: #ecf7f1;
+}
+
+.lite-mode-option {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.lite-year-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 10px;
+  border: 1px solid #d7e4db;
+  border-radius: 999px;
+  background: #edf7f2;
+  color: #2f6150;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.lite-toolbar-actions {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lite-toolbar-actions button {
+  box-shadow: 0 1px 0 #dce6df;
+}
+
+.lite-toolbar-actions button:hover {
+  transform: translateY(-1px);
 }
 
 button,
@@ -558,10 +663,38 @@ th {
   background: #f6f8f7;
 }
 
+.lite-calendar-cell-holiday {
+  border-color: #efc68d;
+  background: #fff8ee;
+}
+
 .lite-calendar-date {
   font-size: 0.8rem;
   font-weight: 600;
   margin-bottom: 4px;
+}
+
+.lite-holiday-tag {
+  display: inline-block;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #8e5300;
+  background: #ffe7c5;
+}
+
+.lite-manual-work-tag {
+  display: inline-block;
+  margin-bottom: 4px;
+  margin-left: 4px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #0f6e4f;
+  background: #d8f2e9;
 }
 
 .lite-cal-summary {
@@ -582,6 +715,27 @@ th {
   margin-top: 6px;
   display: grid;
   gap: 4px;
+}
+
+.lite-cal-mode-actions {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lite-cal-mode-btn {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+}
+
+.lite-cal-mode-btn-rest {
+  color: #b32020;
+}
+
+.lite-cal-mode-btn-work {
+  color: #0f6e4f;
 }
 
 .lite-cal-line-item {

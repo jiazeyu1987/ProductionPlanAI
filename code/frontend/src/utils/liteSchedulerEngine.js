@@ -1,5 +1,118 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const EPSILON = 1e-6;
+export const WEEKEND_REST_MODE = Object.freeze({
+  NONE: "NONE",
+  SINGLE: "SINGLE",
+  DOUBLE: "DOUBLE",
+});
+const DATE_WORK_MODE = Object.freeze({
+  REST: "REST",
+  WORK: "WORK",
+});
+const CN_STATUTORY_HOLIDAY_DATES_BY_YEAR = Object.freeze({
+  2024: Object.freeze([
+    "2024-01-01",
+    "2024-02-10",
+    "2024-02-11",
+    "2024-02-12",
+    "2024-02-13",
+    "2024-02-14",
+    "2024-02-15",
+    "2024-02-16",
+    "2024-02-17",
+    "2024-04-04",
+    "2024-04-05",
+    "2024-04-06",
+    "2024-05-01",
+    "2024-05-02",
+    "2024-05-03",
+    "2024-05-04",
+    "2024-05-05",
+    "2024-06-08",
+    "2024-06-09",
+    "2024-06-10",
+    "2024-09-15",
+    "2024-09-16",
+    "2024-09-17",
+    "2024-10-01",
+    "2024-10-02",
+    "2024-10-03",
+    "2024-10-04",
+    "2024-10-05",
+    "2024-10-06",
+    "2024-10-07",
+  ]),
+  2025: Object.freeze([
+    "2025-01-01",
+    "2025-01-28",
+    "2025-01-29",
+    "2025-01-30",
+    "2025-01-31",
+    "2025-02-01",
+    "2025-02-02",
+    "2025-02-03",
+    "2025-02-04",
+    "2025-04-04",
+    "2025-04-05",
+    "2025-04-06",
+    "2025-05-01",
+    "2025-05-02",
+    "2025-05-03",
+    "2025-05-04",
+    "2025-05-05",
+    "2025-05-31",
+    "2025-06-01",
+    "2025-06-02",
+    "2025-10-01",
+    "2025-10-02",
+    "2025-10-03",
+    "2025-10-04",
+    "2025-10-05",
+    "2025-10-06",
+    "2025-10-07",
+    "2025-10-08",
+  ]),
+  2026: Object.freeze([
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-03",
+    "2026-02-15",
+    "2026-02-16",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-02-19",
+    "2026-02-20",
+    "2026-02-21",
+    "2026-02-22",
+    "2026-02-23",
+    "2026-04-04",
+    "2026-04-05",
+    "2026-04-06",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-09-25",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+    "2026-10-05",
+    "2026-10-06",
+    "2026-10-07",
+  ]),
+  2027: Object.freeze([]),
+  2028: Object.freeze([]),
+});
+const CN_STATUTORY_HOLIDAY_DATE_SET = new Set(
+  Object.values(CN_STATUTORY_HOLIDAY_DATES_BY_YEAR).flat(),
+);
 
 function pad2(value) {
   return String(value).padStart(2, "0");
@@ -18,7 +131,11 @@ function parseIsoDate(value) {
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day)
+  ) {
     return null;
   }
   if (month < 1 || month > 12 || day < 1 || day > 31) {
@@ -84,6 +201,31 @@ function normalizePriority(value) {
   return "NORMAL";
 }
 
+function normalizeWeekendRestMode(value) {
+  const modeText = String(value || "").toUpperCase();
+  if (modeText === WEEKEND_REST_MODE.NONE) {
+    return WEEKEND_REST_MODE.NONE;
+  }
+  if (modeText === WEEKEND_REST_MODE.SINGLE) {
+    return WEEKEND_REST_MODE.SINGLE;
+  }
+  return WEEKEND_REST_MODE.DOUBLE;
+}
+
+function normalizeDateWorkModeByDate(inputValue) {
+  const normalized = {};
+  Object.entries(inputValue || {}).forEach(([dateKey, modeRaw]) => {
+    if (!parseIsoDate(dateKey)) {
+      return;
+    }
+    const mode = String(modeRaw || "").toUpperCase();
+    if (mode === DATE_WORK_MODE.REST || mode === DATE_WORK_MODE.WORK) {
+      normalized[dateKey] = mode;
+    }
+  });
+  return normalized;
+}
+
 function extractTrailingNumber(text) {
   const match = String(text || "").match(/(\d+)(?!.*\d)/);
   if (!match) {
@@ -99,11 +241,13 @@ function normalizeLine(line, index) {
   const baseCapacity = positiveOr(line?.baseCapacity, 300);
   const enabled = line?.enabled !== false;
   const capacityOverrides = {};
-  Object.entries(line?.capacityOverrides || {}).forEach(([dateKey, capacityValue]) => {
-    if (parseIsoDate(dateKey)) {
-      capacityOverrides[dateKey] = positiveOr(capacityValue, baseCapacity);
-    }
-  });
+  Object.entries(line?.capacityOverrides || {}).forEach(
+    ([dateKey, capacityValue]) => {
+      if (parseIsoDate(dateKey)) {
+        capacityOverrides[dateKey] = positiveOr(capacityValue, baseCapacity);
+      }
+    },
+  );
   return { id, name, baseCapacity, capacityOverrides, enabled };
 }
 
@@ -121,17 +265,32 @@ function normalizeOrderLineWorkloads(inputValue) {
 
 function normalizeOrder(order, index, horizonStart) {
   const id = String(order?.id || makeId("order"));
-  const orderNo = String(order?.orderNo || "").trim() || `SO-${pad2(index + 1)}`;
+  const orderNo =
+    String(order?.orderNo || "").trim() || `SO-${pad2(index + 1)}`;
   const inferredSeq = extractTrailingNumber(orderNo) ?? index + 1;
   const orderSeqRaw = Number(order?.orderSeq);
-  const orderSeq = Number.isFinite(orderSeqRaw) ? Math.max(1, Math.round(orderSeqRaw)) : Math.max(1, inferredSeq);
+  const orderSeq = Number.isFinite(orderSeqRaw)
+    ? Math.max(1, Math.round(orderSeqRaw))
+    : Math.max(1, inferredSeq);
   const lineWorkloads = normalizeOrderLineWorkloads(order?.lineWorkloads);
-  const lineWorkloadTotal = round3(Object.values(lineWorkloads).reduce((sum, value) => sum + value, 0));
-  const baseWorkloadDays = positiveOr(order?.workloadDays, lineWorkloadTotal > EPSILON ? lineWorkloadTotal : 1);
+  const lineWorkloadTotal = round3(
+    Object.values(lineWorkloads).reduce((sum, value) => sum + value, 0),
+  );
+  const baseWorkloadDays = positiveOr(
+    order?.workloadDays,
+    lineWorkloadTotal > EPSILON ? lineWorkloadTotal : 1,
+  );
   const workloadDays = Math.max(baseWorkloadDays, lineWorkloadTotal);
-  const completedDays = Math.min(workloadDays, positiveOr(order?.completedDays, 0));
-  const dueDate = parseIsoDate(order?.dueDate) ? order.dueDate : addDays(horizonStart, 7);
-  const releaseDate = parseIsoDate(order?.releaseDate) ? order.releaseDate : horizonStart;
+  const completedDays = Math.min(
+    workloadDays,
+    positiveOr(order?.completedDays, 0),
+  );
+  const dueDate = parseIsoDate(order?.dueDate)
+    ? order.dueDate
+    : addDays(horizonStart, 7);
+  const releaseDate = parseIsoDate(order?.releaseDate)
+    ? order.releaseDate
+    : horizonStart;
   return {
     id,
     orderNo,
@@ -141,7 +300,7 @@ function normalizeOrder(order, index, horizonStart) {
     releaseDate,
     priority: "NORMAL",
     orderSeq,
-    lineWorkloads
+    lineWorkloads,
   };
 }
 
@@ -149,12 +308,24 @@ function normalizeLock(lock, index, fallbackStart) {
   const id = String(lock?.id || makeId("lock"));
   const orderId = String(lock?.orderId || "").trim();
   const lineId = String(lock?.lineId || "").trim();
-  const startDateRaw = parseIsoDate(lock?.startDate) ? lock.startDate : fallbackStart;
+  const startDateRaw = parseIsoDate(lock?.startDate)
+    ? lock.startDate
+    : fallbackStart;
   const endDateRaw = parseIsoDate(lock?.endDate) ? lock.endDate : startDateRaw;
-  const startDate = compareDate(startDateRaw, endDateRaw) <= 0 ? startDateRaw : endDateRaw;
-  const endDate = compareDate(startDateRaw, endDateRaw) <= 0 ? endDateRaw : startDateRaw;
+  const startDate =
+    compareDate(startDateRaw, endDateRaw) <= 0 ? startDateRaw : endDateRaw;
+  const endDate =
+    compareDate(startDateRaw, endDateRaw) <= 0 ? endDateRaw : startDateRaw;
   const workloadDays = positiveOr(lock?.workloadDays, 0);
-  return { id, orderId, lineId, startDate, endDate, workloadDays, seq: Number(lock?.seq ?? index) };
+  return {
+    id,
+    orderId,
+    lineId,
+    startDate,
+    endDate,
+    workloadDays,
+    seq: Number(lock?.seq ?? index),
+  };
 }
 
 function resolveLineCapacity(line, date) {
@@ -180,7 +351,7 @@ function makeAllocation(orderId, lineId, date, workloadDays, source, lockId) {
     date,
     workloadDays: round3(workloadDays),
     source,
-    lockId: lockId || null
+    lockId: lockId || null,
   };
 }
 
@@ -223,8 +394,144 @@ export function diffDays(laterDate, earlierDate) {
   return a - b;
 }
 
-export function buildDateRange(startDate, horizonDays) {
+export function supportedCnHolidayYears() {
+  return Object.keys(CN_STATUTORY_HOLIDAY_DATES_BY_YEAR)
+    .map((year) => Number(year))
+    .sort((a, b) => a - b);
+}
+
+export function isCnStatutoryHoliday(dateText) {
+  const parsed = parseIsoDate(dateText);
+  if (!parsed) {
+    return false;
+  }
+  const normalized = `${parsed.year}-${pad2(parsed.month)}-${pad2(parsed.day)}`;
+  return CN_STATUTORY_HOLIDAY_DATE_SET.has(normalized);
+}
+
+function isWeekendDate(dateText) {
+  const parsed = parseIsoDate(dateText);
+  if (!parsed) {
+    return false;
+  }
+  const weekday = new Date(parsed.ts).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+function isSingleRestDay(dateText) {
+  const parsed = parseIsoDate(dateText);
+  if (!parsed) {
+    return false;
+  }
+  return new Date(parsed.ts).getUTCDay() === 0;
+}
+
+function isSkippedPlanningDate(
+  dateText,
+  skipStatutoryHolidays,
+  weekendRestMode = WEEKEND_REST_MODE.DOUBLE,
+  dateWorkModeByDate = {},
+) {
+  const dayMode = dateWorkModeByDate?.[dateText];
+  if (dayMode === DATE_WORK_MODE.WORK) {
+    return false;
+  }
+  if (dayMode === DATE_WORK_MODE.REST) {
+    return true;
+  }
+
+  if (isCnStatutoryHoliday(dateText)) {
+    return skipStatutoryHolidays;
+  }
+  if (!skipStatutoryHolidays) {
+    return false;
+  }
+  if (weekendRestMode === WEEKEND_REST_MODE.NONE) {
+    return false;
+  }
+  if (weekendRestMode === WEEKEND_REST_MODE.SINGLE) {
+    return isSingleRestDay(dateText);
+  }
+  return isWeekendDate(dateText);
+}
+
+function nextBusinessDate(
+  dateText,
+  skipStatutoryHolidays,
+  weekendRestMode = WEEKEND_REST_MODE.DOUBLE,
+  dateWorkModeByDate = {},
+) {
+  let nextDate = addDays(dateText, 1);
+
+  let guard = 0;
+  while (
+    isSkippedPlanningDate(
+      nextDate,
+      skipStatutoryHolidays,
+      weekendRestMode,
+      dateWorkModeByDate,
+    ) &&
+    guard < 370
+  ) {
+    const candidate = addDays(nextDate, 1);
+    if (candidate === nextDate) {
+      break;
+    }
+    nextDate = candidate;
+    guard += 1;
+  }
+  return nextDate;
+}
+
+export function buildDateRange(
+  startDate,
+  horizonDays,
+  skipStatutoryHolidays = false,
+  weekendRestMode = WEEKEND_REST_MODE.DOUBLE,
+  dateWorkModeByDate = {},
+) {
   const safeDays = Math.max(1, Math.round(clampNumber(horizonDays, 30)));
+  const safeWeekendMode = normalizeWeekendRestMode(weekendRestMode);
+  const safeDateWorkModeByDate =
+    normalizeDateWorkModeByDate(dateWorkModeByDate);
+  const parsedStart = parseIsoDate(startDate);
+  const hasDateOverride = Object.keys(safeDateWorkModeByDate).length > 0;
+  if (!parsedStart) {
+    return Array.from({ length: safeDays }, (_, idx) =>
+      addDays(startDate, idx),
+    );
+  }
+  if (!skipStatutoryHolidays && !hasDateOverride) {
+    return Array.from({ length: safeDays }, (_, idx) =>
+      addDays(startDate, idx),
+    );
+  }
+
+  const dates = [];
+  let cursor = `${parsedStart.year}-${pad2(parsedStart.month)}-${pad2(parsedStart.day)}`;
+  let guard = 0;
+  while (dates.length < safeDays && guard < safeDays * 400) {
+    if (
+      !isSkippedPlanningDate(
+        cursor,
+        skipStatutoryHolidays,
+        safeWeekendMode,
+        safeDateWorkModeByDate,
+      )
+    ) {
+      dates.push(cursor);
+    }
+    const next = addDays(cursor, 1);
+    if (next === cursor) {
+      break;
+    }
+    cursor = next;
+    guard += 1;
+  }
+
+  if (dates.length >= safeDays) {
+    return dates;
+  }
   return Array.from({ length: safeDays }, (_, idx) => addDays(startDate, idx));
 }
 
@@ -235,34 +542,51 @@ export function createDefaultLiteScenario(baseDate = isoToday()) {
     nextOrderSeq: 1,
     horizonStart: start,
     horizonDays: 30,
+    skipStatutoryHolidays: false,
+    weekendRestMode: WEEKEND_REST_MODE.DOUBLE,
+    dateWorkModeByDate: {},
     lines: [
       {
         id: makeId("line"),
         name: "导管产线",
         baseCapacity: 300,
         capacityOverrides: {},
-        enabled: true
-      }
+        enabled: true,
+      },
     ],
     orders: [],
     locks: [],
-    simulationLogs: []
+    simulationLogs: [],
   };
 }
 
 export function normalizeLiteScenario(input) {
   const fallback = createDefaultLiteScenario();
-  const horizonStart = parseIsoDate(input?.horizonStart) ? input.horizonStart : fallback.horizonStart;
-  const horizonDays = Math.max(1, Math.round(clampNumber(input?.horizonDays, 30)));
+  const horizonStart = parseIsoDate(input?.horizonStart)
+    ? input.horizonStart
+    : fallback.horizonStart;
+  const horizonDays = Math.max(
+    1,
+    Math.round(clampNumber(input?.horizonDays, 30)),
+  );
+  const skipStatutoryHolidays = input?.skipStatutoryHolidays === true;
+  const weekendRestMode = normalizeWeekendRestMode(input?.weekendRestMode);
+  const dateWorkModeByDate = normalizeDateWorkModeByDate(
+    input?.dateWorkModeByDate,
+  );
 
   const lines = Array.isArray(input?.lines)
-    ? input.lines.map((line, index) => normalizeLine(line, index)).filter((line) => line.id)
+    ? input.lines
+        .map((line, index) => normalizeLine(line, index))
+        .filter((line) => line.id)
     : [];
   const safeLines = lines.length > 0 ? lines : fallback.lines;
   const lineIdSet = new Set(safeLines.map((line) => line.id));
 
   const rawOrders = Array.isArray(input?.orders)
-    ? input.orders.map((order, index) => normalizeOrder(order, index, horizonStart))
+    ? input.orders.map((order, index) =>
+        normalizeOrder(order, index, horizonStart),
+      )
     : [];
   const orders = rawOrders.map((order) => {
     const nextLineWorkloads = {};
@@ -271,13 +595,15 @@ export function normalizeLiteScenario(input) {
         nextLineWorkloads[lineId] = value;
       }
     });
-    const lineTotal = round3(Object.values(nextLineWorkloads).reduce((sum, value) => sum + value, 0));
+    const lineTotal = round3(
+      Object.values(nextLineWorkloads).reduce((sum, value) => sum + value, 0),
+    );
     const workloadDays = Math.max(order.workloadDays, lineTotal);
     return {
       ...order,
       workloadDays,
       completedDays: Math.min(workloadDays, order.completedDays),
-      lineWorkloads: nextLineWorkloads
+      lineWorkloads: nextLineWorkloads,
     };
   });
   const inferredNextOrderSeq = inferNextOrderSeq(orders);
@@ -296,7 +622,7 @@ export function normalizeLiteScenario(input) {
             lock.orderId &&
             lock.lineId &&
             orderIdSet.has(lock.orderId) &&
-            lineIdSet.has(lock.lineId)
+            lineIdSet.has(lock.lineId),
         )
     : [];
 
@@ -305,7 +631,7 @@ export function normalizeLiteScenario(input) {
         .map((row) => ({
           date: parseIsoDate(row?.date) ? row.date : horizonStart,
           completedWorkload: positiveOr(row?.completedWorkload, 0),
-          note: String(row?.note || "").trim()
+          note: String(row?.note || "").trim(),
         }))
         .slice(0, 30)
     : [];
@@ -315,16 +641,25 @@ export function normalizeLiteScenario(input) {
     nextOrderSeq,
     horizonStart,
     horizonDays,
+    skipStatutoryHolidays,
+    weekendRestMode,
+    dateWorkModeByDate,
     lines: safeLines,
     orders,
     locks,
-    simulationLogs
+    simulationLogs,
   };
 }
 
 export function buildLiteSchedule(inputScenario) {
   const scenario = normalizeLiteScenario(inputScenario);
-  const dates = buildDateRange(scenario.horizonStart, scenario.horizonDays);
+  const dates = buildDateRange(
+    scenario.horizonStart,
+    scenario.horizonDays,
+    scenario.skipStatutoryHolidays,
+    scenario.weekendRestMode,
+    scenario.dateWorkModeByDate,
+  );
   const lines = scenario.lines.filter((line) => line.enabled !== false);
   const orders = scenario.orders;
   const lineSet = new Set(lines.map((line) => line.id));
@@ -347,13 +682,18 @@ export function buildLiteSchedule(inputScenario) {
   });
 
   orders.forEach((order) => {
-    const remaining = Math.max(0, round3(order.workloadDays - order.completedDays));
+    const remaining = Math.max(
+      0,
+      round3(order.workloadDays - order.completedDays),
+    );
     orderRemaining[order.id] = remaining;
 
     const requested = {};
     Object.entries(order.lineWorkloads || {}).forEach(([lineId, qty]) => {
       if (!lineSet.has(lineId)) {
-        warnings.push(`订单 ${order.orderNo} 指定的产线 ${lineId} 不存在，已忽略。`);
+        warnings.push(
+          `订单 ${order.orderNo} 指定的产线 ${lineId} 不存在，已忽略。`,
+        );
         return;
       }
       if (qty > EPSILON) {
@@ -361,8 +701,13 @@ export function buildLiteSchedule(inputScenario) {
       }
     });
 
-    const requestedTotal = round3(Object.values(requested).reduce((sum, value) => sum + value, 0));
-    const ratio = requestedTotal > EPSILON && remaining > EPSILON ? Math.min(1, remaining / requestedTotal) : 0;
+    const requestedTotal = round3(
+      Object.values(requested).reduce((sum, value) => sum + value, 0),
+    );
+    const ratio =
+      requestedTotal > EPSILON && remaining > EPSILON
+        ? Math.min(1, remaining / requestedTotal)
+        : 0;
 
     const normalized = {};
     Object.entries(requested).forEach(([lineId, qty]) => {
@@ -398,8 +743,12 @@ export function buildLiteSchedule(inputScenario) {
     }
     const safeQty = round3(qty);
     orderRemaining[orderId] = round3((orderRemaining[orderId] || 0) - safeQty);
-    lineRemainingCap[lineId][date] = round3((lineRemainingCap[lineId][date] || 0) - safeQty);
-    allocations.push(makeAllocation(orderId, lineId, date, safeQty, source, lockId));
+    lineRemainingCap[lineId][date] = round3(
+      (lineRemainingCap[lineId][date] || 0) - safeQty,
+    );
+    allocations.push(
+      makeAllocation(orderId, lineId, date, safeQty, source, lockId),
+    );
     return safeQty;
   }
 
@@ -422,7 +771,9 @@ export function buildLiteSchedule(inputScenario) {
     }
 
     const lockDates = dates.filter(
-      (date) => compareDate(date, lock.startDate) >= 0 && compareDate(date, lock.endDate) <= 0
+      (date) =>
+        compareDate(date, lock.startDate) >= 0 &&
+        compareDate(date, lock.endDate) <= 0,
     );
     if (lockDates.length === 0) {
       warnings.push(`锁定片段 ${lock.id} 不在当前周期内，已跳过。`);
@@ -434,7 +785,14 @@ export function buildLiteSchedule(inputScenario) {
       if (left <= EPSILON) {
         return;
       }
-      const done = allocateOne(lock.orderId, lock.lineId, date, left, "LOCKED", lock.id);
+      const done = allocateOne(
+        lock.orderId,
+        lock.lineId,
+        date,
+        left,
+        "LOCKED",
+        lock.id,
+      );
       reduceLineRequirement(lock.orderId, lock.lineId, done);
       left = round3(left - done);
     });
@@ -481,7 +839,10 @@ export function buildLiteSchedule(inputScenario) {
         return;
       }
       const dynamicLines = activeLineIds.slice().sort((a, b) => {
-        return (lineRemainingCap[b]?.[date] || 0) - (lineRemainingCap[a]?.[date] || 0);
+        return (
+          (lineRemainingCap[b]?.[date] || 0) -
+          (lineRemainingCap[a]?.[date] || 0)
+        );
       });
       dynamicLines.forEach((lineId) => {
         if (left <= EPSILON) {
@@ -505,13 +866,18 @@ export function buildLiteSchedule(inputScenario) {
     }
     allocationMap[lineDateKey].push(item);
 
-    const dateMap = (orderAllocByDate[item.orderId] = orderAllocByDate[item.orderId] || {});
+    const dateMap = (orderAllocByDate[item.orderId] =
+      orderAllocByDate[item.orderId] || {});
     dateMap[item.date] = round3((dateMap[item.date] || 0) + item.workloadDays);
 
     if (item.source === "LOCKED") {
-      orderLockedTotals[item.orderId] = round3((orderLockedTotals[item.orderId] || 0) + item.workloadDays);
+      orderLockedTotals[item.orderId] = round3(
+        (orderLockedTotals[item.orderId] || 0) + item.workloadDays,
+      );
     } else {
-      orderAutoTotals[item.orderId] = round3((orderAutoTotals[item.orderId] || 0) + item.workloadDays);
+      orderAutoTotals[item.orderId] = round3(
+        (orderAutoTotals[item.orderId] || 0) + item.workloadDays,
+      );
     }
   });
 
@@ -541,7 +907,10 @@ export function buildLiteSchedule(inputScenario) {
     const dateMap = orderAllocByDate[order.id] || {};
 
     let completed = order.completedDays;
-    let completionDate = completed >= order.workloadDays ? addDays(scenario.horizonStart, -1) : null;
+    let completionDate =
+      completed >= order.workloadDays
+        ? addDays(scenario.horizonStart, -1)
+        : null;
 
     dates.forEach((date) => {
       if (completionDate) {
@@ -553,12 +922,22 @@ export function buildLiteSchedule(inputScenario) {
       }
     });
 
-    if (!completionDate && remaining > EPSILON && nominalDailyCapacity > EPSILON) {
-      completionDate = addDays(dates[dates.length - 1], Math.ceil(remaining / nominalDailyCapacity));
+    if (
+      !completionDate &&
+      remaining > EPSILON &&
+      nominalDailyCapacity > EPSILON
+    ) {
+      completionDate = addDays(
+        dates[dates.length - 1],
+        Math.ceil(remaining / nominalDailyCapacity),
+      );
     }
 
     const hasLinePreference =
-      Object.values(order.lineWorkloads || {}).reduce((sum, value) => sum + value, 0) > EPSILON;
+      Object.values(order.lineWorkloads || {}).reduce(
+        (sum, value) => sum + value,
+        0,
+      ) > EPSILON;
     const reasonParts = [];
     if (hasLinePreference) {
       reasonParts.push("先满足指定产线工作量");
@@ -570,13 +949,17 @@ export function buildLiteSchedule(inputScenario) {
 
     return {
       ...order,
-      scheduledDays: round3(order.workloadDays - remaining - order.completedDays),
+      scheduledDays: round3(
+        order.workloadDays - remaining - order.completedDays,
+      ),
       autoScheduledDays: round3(orderAutoTotals[order.id] || 0),
       lockedScheduledDays: round3(orderLockedTotals[order.id] || 0),
       remainingDays: round3(remaining),
       completionDate,
-      delayDays: completionDate ? Math.max(0, diffDays(completionDate, order.dueDate)) : null,
-      reason: `${reasonParts.join("，")}。`
+      delayDays: completionDate
+        ? Math.max(0, diffDays(completionDate, order.dueDate))
+        : null,
+      reason: `${reasonParts.join("，")}。`,
     };
   });
 
@@ -587,14 +970,16 @@ export function buildLiteSchedule(inputScenario) {
     dates.forEach((date) => {
       const cap = lineCapByDate[line.id]?.[date] || 0;
       const items = allocationMap[`${line.id}|${date}`] || [];
-      const assigned = round3(items.reduce((sum, item) => sum + item.workloadDays, 0));
+      const assigned = round3(
+        items.reduce((sum, item) => sum + item.workloadDays, 0),
+      );
       assignedTotal = round3(assignedTotal + assigned);
       capacityTotal = round3(capacityTotal + cap);
       daily[date] = {
         capacity: cap,
         assigned,
         utilization: cap > EPSILON ? assigned / cap : 0,
-        items
+        items,
       };
     });
     return {
@@ -603,7 +988,7 @@ export function buildLiteSchedule(inputScenario) {
       assignedTotal,
       capacityTotal,
       utilization: capacityTotal > EPSILON ? assignedTotal / capacityTotal : 0,
-      daily
+      daily,
     };
   });
 
@@ -615,12 +1000,20 @@ export function buildLiteSchedule(inputScenario) {
           return lineSum + (lineCapByDate[line.id]?.[date] || 0);
         }, 0)
       );
-    }, 0)
+    }, 0),
   );
-  const totalAssigned = round3(allocations.reduce((sum, item) => sum + item.workloadDays, 0));
-  const delayedOrders = orderRows.filter((row) => Number(row.delayDays) > 0).length;
-  const totalRemaining = round3(Object.values(orderRemaining).reduce((sum, value) => sum + value, 0));
-  const bottleneck = lineRows.slice().sort((a, b) => b.utilization - a.utilization)[0];
+  const totalAssigned = round3(
+    allocations.reduce((sum, item) => sum + item.workloadDays, 0),
+  );
+  const delayedOrders = orderRows.filter(
+    (row) => Number(row.delayDays) > 0,
+  ).length;
+  const totalRemaining = round3(
+    Object.values(orderRemaining).reduce((sum, value) => sum + value, 0),
+  );
+  const bottleneck = lineRows
+    .slice()
+    .sort((a, b) => b.utilization - a.utilization)[0];
 
   return {
     scenario,
@@ -639,8 +1032,8 @@ export function buildLiteSchedule(inputScenario) {
       delayedOrders,
       totalRemaining,
       bottleneckLineId: bottleneck?.lineId || null,
-      bottleneckLineName: bottleneck?.lineName || null
-    }
+      bottleneckLineName: bottleneck?.lineName || null,
+    },
   };
 }
 
@@ -654,18 +1047,29 @@ export function advanceLiteScenarioOneDay(inputScenario) {
   plan.allocations
     .filter((item) => item.date === today)
     .forEach((item) => {
-      completedByOrder[item.orderId] = round3((completedByOrder[item.orderId] || 0) + item.workloadDays);
+      completedByOrder[item.orderId] = round3(
+        (completedByOrder[item.orderId] || 0) + item.workloadDays,
+      );
       if (item.lockId) {
-        consumedByLock[item.lockId] = round3((consumedByLock[item.lockId] || 0) + item.workloadDays);
+        consumedByLock[item.lockId] = round3(
+          (consumedByLock[item.lockId] || 0) + item.workloadDays,
+        );
       }
     });
 
-  const newStart = addDays(today, 1);
+  const newStart = nextBusinessDate(
+    today,
+    scenario.skipStatutoryHolidays,
+    scenario.weekendRestMode,
+    scenario.dateWorkModeByDate,
+  );
   const nextOrders = scenario.orders.map((order) => {
-    const completed = round3(order.completedDays + (completedByOrder[order.id] || 0));
+    const completed = round3(
+      order.completedDays + (completedByOrder[order.id] || 0),
+    );
     return {
       ...order,
-      completedDays: Math.min(order.workloadDays, completed)
+      completedDays: Math.min(order.workloadDays, completed),
     };
   });
 
@@ -676,19 +1080,22 @@ export function advanceLiteScenarioOneDay(inputScenario) {
       if (left <= EPSILON) {
         return null;
       }
-      const startDate = compareDate(lock.startDate, newStart) < 0 ? newStart : lock.startDate;
+      const startDate =
+        compareDate(lock.startDate, newStart) < 0 ? newStart : lock.startDate;
       if (compareDate(startDate, lock.endDate) > 0) {
         return null;
       }
       return {
         ...lock,
         startDate,
-        workloadDays: left
+        workloadDays: left,
       };
     })
     .filter(Boolean);
 
-  const completedToday = round3(Object.values(completedByOrder).reduce((sum, value) => sum + value, 0));
+  const completedToday = round3(
+    Object.values(completedByOrder).reduce((sum, value) => sum + value, 0),
+  );
   const nextScenario = normalizeLiteScenario({
     ...scenario,
     horizonStart: newStart,
@@ -698,10 +1105,10 @@ export function advanceLiteScenarioOneDay(inputScenario) {
       {
         date: today,
         completedWorkload: completedToday,
-        note: "按当前方案推进 1 天"
+        note: "按当前方案推进 1 天",
       },
-      ...scenario.simulationLogs
-    ].slice(0, 30)
+      ...scenario.simulationLogs,
+    ].slice(0, 30),
   });
   const nextPlan = buildLiteSchedule(nextScenario);
 
@@ -712,7 +1119,7 @@ export function advanceLiteScenarioOneDay(inputScenario) {
       completedWorkload: completedToday,
       remainingWorkload: nextPlan.summary.totalRemaining,
       delayedOrders: nextPlan.summary.delayedOrders,
-      message: `已推进至 ${newStart}，当日完成 ${completedToday} 天工作量。`
-    }
+      message: `已推进至 ${newStart}，当日完成 ${completedToday} 天工作量。`,
+    },
   };
 }

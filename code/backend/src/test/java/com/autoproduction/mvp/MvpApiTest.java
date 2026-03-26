@@ -1015,6 +1015,145 @@ class MvpApiTest {
       .andExpect(jsonPath("$.items").isArray());
   }
 
+  @Test
+  @SuppressWarnings("unchecked")
+  void masterdataConfigSupportsCreateAndDeleteForCrudTabs() throws Exception {
+    MvcResult configResult = mockMvc.perform(
+        get("/internal/v1/internal/masterdata/config")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> configBody = objectMapper.readValue(configResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> processRows = (List<Map<String, Object>>) configBody.get("process_configs");
+    assertTrue(!processRows.isEmpty(), "process_configs should not be empty");
+
+    Map<String, Object> keepProcess = processRows.get(0);
+    String keepProcessCode = String.valueOf(keepProcess.get("process_code"));
+    double keepCapacityPerShift = ((Number) keepProcess.get("capacity_per_shift")).doubleValue();
+    int keepRequiredWorkers = ((Number) keepProcess.get("required_workers")).intValue();
+    int keepRequiredMachines = ((Number) keepProcess.get("required_machines")).intValue();
+
+    String horizonStartDate = String.valueOf(configBody.get("horizon_start_date"));
+    assertTrue(horizonStartDate != null && !horizonStartDate.isBlank(), "horizon_start_date should not be blank");
+
+    MvcResult routesResult = mockMvc.perform(get("/v1/mes/process-routes"))
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> routesBody = objectMapper.readValue(routesResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> routeItems = (List<Map<String, Object>>) routesBody.get("items");
+    assertTrue(!routeItems.isEmpty(), "process routes should not be empty");
+    String productCode = String.valueOf(routeItems.get(0).get("product_code"));
+
+    String addedProcessCode = "PROC_CRUD_ADD";
+    Map<String, Object> createPayload = Map.of(
+      "request_id", "req-test-masterdata-crud-create",
+      "process_configs", List.of(
+        Map.of(
+          "process_code", keepProcessCode,
+          "capacity_per_shift", keepCapacityPerShift,
+          "required_workers", keepRequiredWorkers,
+          "required_machines", keepRequiredMachines
+        ),
+        Map.of(
+          "process_code", addedProcessCode,
+          "capacity_per_shift", 88.5,
+          "required_workers", 3,
+          "required_machines", 2
+        )
+      ),
+      "resource_pool", List.of(
+        Map.of(
+          "calendar_date", horizonStartDate,
+          "shift_code", "DAY",
+          "process_code", addedProcessCode,
+          "workers_available", 9,
+          "machines_available", 4,
+          "open_flag", 1
+        )
+      ),
+      "initial_carryover_occupancy", List.of(
+        Map.of(
+          "calendar_date", horizonStartDate,
+          "shift_code", "DAY",
+          "process_code", addedProcessCode,
+          "occupied_workers", 2,
+          "occupied_machines", 1
+        )
+      ),
+      "material_availability", List.of(
+        Map.of(
+          "calendar_date", horizonStartDate,
+          "shift_code", "DAY",
+          "product_code", productCode,
+          "process_code", addedProcessCode,
+          "available_qty", 123.45
+        )
+      )
+    );
+
+    MvcResult createResult = mockMvc.perform(
+        post("/internal/v1/internal/masterdata/config")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(createPayload))
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> createBody = objectMapper.readValue(createResult.getResponse().getContentAsString(), Map.class);
+
+    List<Map<String, Object>> createdProcessRows = (List<Map<String, Object>>) createBody.get("process_configs");
+    List<Map<String, Object>> createdResourceRows = (List<Map<String, Object>>) createBody.get("resource_pool");
+    List<Map<String, Object>> createdCarryoverRows = (List<Map<String, Object>>) createBody.get("initial_carryover_occupancy");
+    List<Map<String, Object>> createdMaterialRows = (List<Map<String, Object>>) createBody.get("material_availability");
+
+    assertTrue(
+      createdProcessRows.stream().anyMatch(row -> addedProcessCode.equals(String.valueOf(row.get("process_code")))),
+      "added process should exist after create"
+    );
+    assertEquals(1, createdResourceRows.size(), "resource_pool should only contain created row");
+    assertEquals(1, createdCarryoverRows.size(), "initial_carryover_occupancy should only contain created row");
+    assertEquals(1, createdMaterialRows.size(), "material_availability should only contain created row");
+
+    Map<String, Object> deletePayload = Map.of(
+      "request_id", "req-test-masterdata-crud-delete",
+      "process_configs", List.of(
+        Map.of(
+          "process_code", keepProcessCode,
+          "capacity_per_shift", keepCapacityPerShift,
+          "required_workers", keepRequiredWorkers,
+          "required_machines", keepRequiredMachines
+        )
+      ),
+      "resource_pool", List.of(),
+      "initial_carryover_occupancy", List.of(),
+      "material_availability", List.of()
+    );
+
+    MvcResult deleteResult = mockMvc.perform(
+        post("/internal/v1/internal/masterdata/config")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(deletePayload))
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> deleteBody = objectMapper.readValue(deleteResult.getResponse().getContentAsString(), Map.class);
+
+    List<Map<String, Object>> deletedProcessRows = (List<Map<String, Object>>) deleteBody.get("process_configs");
+    List<Map<String, Object>> deletedResourceRows = (List<Map<String, Object>>) deleteBody.get("resource_pool");
+    List<Map<String, Object>> deletedCarryoverRows = (List<Map<String, Object>>) deleteBody.get("initial_carryover_occupancy");
+    List<Map<String, Object>> deletedMaterialRows = (List<Map<String, Object>>) deleteBody.get("material_availability");
+
+    assertTrue(
+      deletedProcessRows.stream().noneMatch(row -> addedProcessCode.equals(String.valueOf(row.get("process_code")))),
+      "added process should be removed after delete"
+    );
+    assertEquals(0, deletedResourceRows.size(), "resource_pool should be empty after delete");
+    assertEquals(0, deletedCarryoverRows.size(), "initial_carryover_occupancy should be empty after delete");
+    assertEquals(0, deletedMaterialRows.size(), "material_availability should be empty after delete");
+  }
+
   private static Path locateOfficialResource(String keyword, String extension) throws IOException {
     Path dir = Paths.get("..", "..", "doc", "offical_resource").toAbsolutePath().normalize();
     try (var stream = Files.list(dir)) {
