@@ -11,6 +11,7 @@ import {
 } from "../utils/liteSchedulerEngine";
 
 const STORAGE_KEY = "liteScheduler.scenario.v1";
+const SNAPSHOT_STORAGE_KEY = "liteScheduler.scenario.snapshots.v1";
 const LITE_TAB_ITEMS = [
   { id: "orders", label: "订单录入" },
   { id: "schedule", label: "每日排产" },
@@ -147,16 +148,61 @@ function saveScenario(scenario) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(scenario));
 }
 
-function downloadJson(fileName, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function formatSnapshotName(date = new Date()) {
+  const year = date.getFullYear();
+  const month = pad2(date.getMonth() + 1);
+  const day = pad2(date.getDate());
+  const hour = pad2(date.getHours());
+  const minute = pad2(date.getMinutes());
+  const second = pad2(date.getSeconds());
+  return `${year}-${month}-${day} ${hour}-${minute}-${second}`;
+}
+
+function formatSnapshotDisplay(dateMs) {
+  const n = Number(dateMs);
+  if (!Number.isFinite(n)) {
+    return "-";
+  }
+  return formatSnapshotName(new Date(n));
+}
+
+function loadSnapshots() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .map((row) => ({
+        id: String(row?.id || makeId("snapshot")),
+        name: String(row?.name || "").trim() || formatSnapshotName(new Date()),
+        createdAt: Number(row?.createdAt) || Date.now(),
+        updatedAt: Number(row?.updatedAt) || Number(row?.createdAt) || Date.now(),
+        scenario: normalizeLiteScenario(row?.scenario)
+      }))
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+function saveSnapshots(rows) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  const safeRows = Array.isArray(rows) ? rows : [];
+  window.localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(safeRows));
 }
 
 function confirmAction(message) {
@@ -245,6 +291,10 @@ export default function LiteSchedulerPage() {
   const [orderModalForm, setOrderModalForm] = useState(() => createOrderModalForm(loadScenario()));
   const [activeTab, setActiveTab] = useState("orders");
   const [showInsertModal, setShowInsertModal] = useState(false);
+  const [showSnapshotModal, setShowSnapshotModal] = useState(false);
+  const [snapshotModalMode, setSnapshotModalMode] = useState("save");
+  const [snapshotName, setSnapshotName] = useState(() => formatSnapshotName(new Date()));
+  const [snapshots, setSnapshots] = useState(loadSnapshots);
   const [insertForm, setInsertForm] = useState({
     orderId: "",
     date: ""
@@ -324,6 +374,112 @@ export default function LiteSchedulerPage() {
     } catch (e) {
       setError(e.message || "操作失败");
     }
+  }
+
+  function applyLoadedScenario(nextScenario, successMessage = "") {
+    setScenario(nextScenario);
+    setOrderModalForm(createOrderModalForm(nextScenario));
+    setShowOrderModal(false);
+    setEditingOrderId(null);
+    setShowInsertModal(false);
+    setInsertForm({
+      orderId: "",
+      date: nextScenario.horizonStart
+    });
+    if (successMessage) {
+      setMessage(successMessage);
+    }
+    setError("");
+  }
+
+  function refreshSnapshots() {
+    setSnapshots(loadSnapshots());
+  }
+
+  function openSnapshotModal(mode) {
+    setSnapshotModalMode(mode === "load" ? "load" : "save");
+    setSnapshotName(formatSnapshotName(new Date()));
+    refreshSnapshots();
+    setShowSnapshotModal(true);
+    setError("");
+    setMessage("");
+  }
+
+  function closeSnapshotModal() {
+    setShowSnapshotModal(false);
+  }
+
+  function saveSnapshotToLocal() {
+    const name = String(snapshotName || "").trim() || formatSnapshotName(new Date());
+    const now = Date.now();
+    const row = {
+      id: makeId("snapshot"),
+      name,
+      createdAt: now,
+      updatedAt: now,
+      scenario: normalizeLiteScenario(scenario)
+    };
+    const nextRows = [row, ...loadSnapshots()].sort((a, b) => b.updatedAt - a.updatedAt);
+    saveSnapshots(nextRows);
+    setSnapshots(nextRows);
+    setSnapshotName(formatSnapshotName(new Date()));
+    setMessage(`场景已保存：${name}`);
+  }
+
+  function renameSnapshot(snapshotId, nextName) {
+    const safeName = String(nextName || "").trim();
+    if (!safeName) {
+      setError("场景名称不能为空。");
+      refreshSnapshots();
+      return;
+    }
+    const rows = loadSnapshots();
+    const nextRows = rows
+      .map((row) => {
+        if (row.id !== snapshotId) {
+          return row;
+        }
+        return {
+          ...row,
+          name: safeName,
+          updatedAt: Date.now()
+        };
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    saveSnapshots(nextRows);
+    setSnapshots(nextRows);
+    setMessage(`场景已改名：${safeName}`);
+  }
+
+  function deleteSnapshot(snapshotId) {
+    const rows = loadSnapshots();
+    const target = rows.find((row) => row.id === snapshotId);
+    if (!target) {
+      return;
+    }
+    if (!confirmAction(`确认删除场景 "${target.name}" 吗？`)) {
+      return;
+    }
+    const nextRows = rows.filter((row) => row.id !== snapshotId);
+    saveSnapshots(nextRows);
+    setSnapshots(nextRows);
+    setMessage(`场景已删除：${target.name}`);
+  }
+
+  function loadSnapshot(snapshotId) {
+    const rows = loadSnapshots();
+    const target = rows.find((row) => row.id === snapshotId);
+    if (!target) {
+      setError("未找到要读取的场景。");
+      return;
+    }
+    const nextScenario = normalizeLiteScenario(target.scenario);
+    applyLoadedScenario(nextScenario, `已读取场景：${target.name}`);
+    const month = monthTextFromDate(nextScenario.horizonStart);
+    if (month) {
+      setCalendarMonth(month);
+    }
+    setShowSnapshotModal(false);
   }
 
   function addLine() {
@@ -741,40 +897,6 @@ export default function LiteSchedulerPage() {
     selectCalendarMonth(nextMonthText);
   }
 
-  function exportScenario() {
-    downloadJson(`lite-schedule-${scenario.horizonStart}.json`, scenario);
-    setMessage("场景已导出。");
-  }
-
-  async function importScenario(event) {
-    const file = event.target.files?.[0];
-    if (!file) {
-      return;
-    }
-    setError("");
-    setMessage("");
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-      const nextScenario = normalizeLiteScenario(parsed);
-      setScenario(nextScenario);
-      setOrderModalForm(createOrderModalForm(nextScenario));
-      setShowOrderModal(false);
-      setEditingOrderId(null);
-      setShowInsertModal(false);
-      setInsertForm({
-        orderId: "",
-        date: nextScenario.horizonStart
-      });
-      setCalendarMonth(monthTextFromDate(nextScenario.horizonStart) || calendarMonth);
-      setMessage("场景导入成功。");
-    } catch (e) {
-      setError(e.message || "导入失败，请检查文件格式。");
-    } finally {
-      event.target.value = "";
-    }
-  }
-
   const lineRows = plan.lineRows.map((row) => ({
     id: row.lineId,
     line_name: row.lineName,
@@ -827,6 +949,12 @@ export default function LiteSchedulerPage() {
     line_name: line.name,
     daily_capacity: line.baseCapacity
   }));
+  const snapshotRows = snapshots.map((row) => ({
+    id: row.id,
+    name: row.name,
+    updated_at: row.updatedAt,
+    created_at: row.createdAt
+  }));
 
   const modalTotalWorkload = Object.values(orderModalForm.lineTotals || {}).reduce((sum, value) => {
     return sum + Math.max(0, toNumber(value, 0));
@@ -851,13 +979,14 @@ export default function LiteSchedulerPage() {
           推进1天
         </button>
         <button data-testid="replan-today-btn" onClick={replanFromToday}>
-          从今天重排
+          开始排产
         </button>
-        <button onClick={exportScenario}>导出场景</button>
-        <label className="lite-file-label">
-          导入场景
-          <input type="file" accept="application/json" onChange={importScenario} />
-        </label>
+        <button data-testid="save-snapshot-btn" onClick={() => openSnapshotModal("save")}>
+          保存场景
+        </button>
+        <button data-testid="load-snapshot-btn" onClick={() => openSnapshotModal("load")}>
+          读取场景
+        </button>
         <button className="btn-danger-text" onClick={resetScenario}>
           重置默认
         </button>
@@ -1157,6 +1286,60 @@ export default function LiteSchedulerPage() {
           </div>
         </div>
       </div>
+      ) : null}
+
+      {showSnapshotModal ? (
+        <div className="lite-modal-backdrop" onClick={closeSnapshotModal}>
+          <div className="lite-modal" role="dialog" aria-modal="true" data-testid="snapshot-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="panel-head">
+              <h3>{snapshotModalMode === "save" ? "保存场景" : "读取场景"}</h3>
+              <button onClick={closeSnapshotModal}>关闭</button>
+            </div>
+
+            {snapshotModalMode === "save" ? (
+              <div className="toolbar">
+                <label>
+                  场景名称
+                  <input
+                    data-testid="snapshot-name-input"
+                    value={snapshotName}
+                    onChange={(e) => setSnapshotName(e.target.value)}
+                  />
+                </label>
+                <button className="btn-success-text" data-testid="snapshot-save-confirm-btn" onClick={saveSnapshotToLocal}>
+                  保存到本地
+                </button>
+              </div>
+            ) : null}
+
+            <SimpleTable
+              columns={[
+                {
+                  key: "name",
+                  title: "场景名称",
+                  render: (value, row) => (
+                    <input defaultValue={String(value || "")} onBlur={(e) => renameSnapshot(row.id, e.target.value)} />
+                  )
+                },
+                { key: "updated_at", title: "更新时间", render: (value) => formatSnapshotDisplay(value) },
+                { key: "created_at", title: "创建时间", render: (value) => formatSnapshotDisplay(value) },
+                {
+                  key: "actions",
+                  title: "操作",
+                  render: (_, row) => (
+                    <div className="row-actions">
+                      <button onClick={() => loadSnapshot(row.id)}>读取</button>
+                      <button className="btn-danger-text" onClick={() => deleteSnapshot(row.id)}>
+                        删除
+                      </button>
+                    </div>
+                  )
+                }
+              ]}
+              rows={snapshotRows}
+            />
+          </div>
+        </div>
       ) : null}
 
       {showInsertModal ? (

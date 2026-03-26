@@ -1,6 +1,6 @@
 param(
   [int]$BackendPort = 5931,
-  [int]$FrontendPort = 5933,
+  [int]$FrontendPort = 5932,
   [int]$TimeoutSeconds = 120,
   [switch]$OpenBrowser
 )

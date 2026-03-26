@@ -163,4 +163,44 @@ describe("LiteSchedulerPage", () => {
     expect(screen.getByTestId("horizon-start-input")).toHaveValue(todayIso);
     expect(screen.getByText(new RegExp(`已从今天 ${todayIso} 开始重排`))).toBeInTheDocument();
   });
+
+  it("supports local snapshot save, rename, load and delete", () => {
+    render(<LiteSchedulerPage />);
+
+    const startInput = screen.getByTestId("horizon-start-input");
+    const savedStart = startInput.value;
+
+    fireEvent.click(screen.getByTestId("save-snapshot-btn"));
+    expect(screen.getByTestId("snapshot-modal")).toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("snapshot-name-input"), {
+      target: { value: "测试场景A" }
+    });
+    fireEvent.click(screen.getByTestId("snapshot-save-confirm-btn"));
+    expect(screen.getByText(/场景已保存：测试场景A/)).toBeInTheDocument();
+
+    fireEvent.change(startInput, { target: { value: "2020-01-01" } });
+    expect(startInput).toHaveValue("2020-01-01");
+
+    fireEvent.click(screen.getByTestId("load-snapshot-btn"));
+    const nameInput = screen.getAllByDisplayValue("测试场景A")[0];
+    const row = nameInput.closest("tr");
+    expect(row).not.toBeNull();
+
+    fireEvent.change(nameInput, { target: { value: "测试场景B" } });
+    fireEvent.blur(nameInput);
+    expect(screen.getByText(/场景已改名：测试场景B/)).toBeInTheDocument();
+
+    const renamedInput = screen.getAllByDisplayValue("测试场景B")[0];
+    const renamedRow = renamedInput.closest("tr");
+    expect(renamedRow).not.toBeNull();
+    fireEvent.click(within(renamedRow).getByRole("button", { name: "读取" }));
+    expect(screen.getByTestId("horizon-start-input")).toHaveValue(savedStart);
+
+    fireEvent.click(screen.getByTestId("load-snapshot-btn"));
+    const deletingInput = screen.getAllByDisplayValue("测试场景B")[0];
+    const deletingRow = deletingInput.closest("tr");
+    expect(deletingRow).not.toBeNull();
+    fireEvent.click(within(deletingRow).getByRole("button", { name: "删除" }));
+    expect(screen.queryByDisplayValue("测试场景B")).toBeNull();
+  });
 });
