@@ -1,8 +1,18 @@
 import { formatDateTimeByField } from "../utils/datetime";
 
-export default function SimpleTable({ columns, rows }) {
+export default function SimpleTable({ columns, rows, className = "", rowKey }) {
+  function resolveRowKey(row, index) {
+    if (typeof rowKey === "function") {
+      return rowKey(row, index);
+    }
+    if (typeof rowKey === "string" && row[rowKey] !== undefined && row[rowKey] !== null) {
+      return row[rowKey];
+    }
+    return row.id || row.request_id || row.order_no || `${index}`;
+  }
+
   return (
-    <div className="table-wrap">
+    <div className={`table-wrap ${className}`.trim()}>
       <table>
         <thead>
           <tr>
@@ -18,7 +28,7 @@ export default function SimpleTable({ columns, rows }) {
             </tr>
           ) : (
             rows.map((row, index) => (
-              <tr key={row.id || row.request_id || row.order_no || `${index}`}>
+              <tr key={resolveRowKey(row, index)}>
                 {columns.map((column) => (
                   <td key={column.key}>
                     {column.render

@@ -1,11 +1,28 @@
 ﻿import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import SimpleTable from "../components/SimpleTable";
-import { loadList, postLegacy } from "../services/api";
+import { apiRequest, loadList, postLegacy } from "../services/api";
 
-function toIntText(value) {
+function toNumberText(value) {
   const n = Number(value);
-  return Number.isFinite(n) ? String(Math.round(n)) : "-";
+  if (!Number.isFinite(n)) {
+    return "-";
+  }
+  if (Math.abs(n - Math.round(n)) < 1e-9) {
+    return String(Math.round(n));
+  }
+  return String(Math.round(n * 100) / 100).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function toDisplayTime(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) {
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
+  }
+  const text = String(value);
+  return text.replace("T", " ").replace("Z", "");
 }
 
 function normalizeHeader(raw) {
@@ -90,6 +107,7 @@ export default function ExecutionWipPage() {
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [deletingReportId, setDeletingReportId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [importFileName, setImportFileName] = useState("");
@@ -140,6 +158,32 @@ export default function ExecutionWipPage() {
       setError(e.message || "提交报工失败");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function deleteReporting(reportId) {
+    if (!reportId) {
+      return;
+    }
+    const confirmed = window.confirm(`确认删除报工记录 ${reportId} 吗？`);
+    if (!confirmed) {
+      return;
+    }
+    setError("");
+    setMessage("");
+    setDeletingReportId(reportId);
+    try {
+      await apiRequest(`/api/reportings/${encodeURIComponent(reportId)}`, {
+        method: "DELETE",
+        contract: false,
+        body: {}
+      });
+      await refresh();
+      setMessage(`报工记录 ${reportId} 已删除。`);
+    } catch (e) {
+      setError(e.message || "删除报工失败");
+    } finally {
+      setDeletingReportId("");
     }
   }
 
@@ -224,13 +268,35 @@ export default function ExecutionWipPage() {
     }
   }
 
+  const reportRecordRows = reportings
+    .map((row) => {
+      const reportId = row.report_id || row.reporting_id || row.reportingId || "";
+      const reportTimeRaw = row.report_time || "";
+      const updatedTimeRaw = row.last_update_time || reportTimeRaw;
+      const sortTime = new Date(reportTimeRaw).getTime();
+      return {
+        ...row,
+        report_id: reportId,
+        fee_code: row.fee_code || row.process_code || "-",
+        fee_name: row.fee_name || row.process_name_cn || row.process_code || "-",
+        filler_code: row.filler_code || row.operator_code || "OP-A",
+        filler_name: row.filler_name || row.operator_name_cn || "系统填报",
+        section_leader: row.section_leader || row.section_leader_name || row.team_code || "默认工段长",
+        qty_text: toNumberText(row.report_qty),
+        created_time_text: toDisplayTime(updatedTimeRaw),
+        filled_time_text: toDisplayTime(reportTimeRaw),
+        sort_time: Number.isNaN(sortTime) ? 0 : sortTime
+      };
+    })
+    .sort((a, b) => b.sort_time - a.sort_time);
+
   useEffect(() => {
     refresh().catch(() => {});
   }, []);
 
   return (
     <section>
-      <h2>报工列表</h2>
+      <h2>报工记录</h2>
       {error ? <p className="error">{error}</p> : null}
       {message ? <p className="notice">{message}</p> : null}
 
@@ -319,41 +385,39 @@ export default function ExecutionWipPage() {
           清空时间
         </button>
       </div>
+
       <SimpleTable
+        className="reporting-record-table"
+        rowKey="report_id"
         columns={[
-          { key: "report_id", title: "报工ID" },
+          { key: "fee_code", title: "费用编码" },
+          { key: "fee_name", title: "费用名称" },
+          { key: "filler_code", title: "填写人编码" },
+          { key: "filler_name", title: "填写名称" },
+          { key: "section_leader", title: "工段长" },
           {
-            key: "order_no",
-            title: "订单",
-            render: (value) =>
-              value ? (
-                <Link className="table-link" to={`/orders/pool?order_no=${encodeURIComponent(value)}`}>
-                  {value}
-                </Link>
-              ) : (
-                "-"
-              )
+            key: "qty_text",
+            title: "个数",
+            render: (value) => <span className="report-record-qty">{value}</span>
           },
+          { key: "created_time_text", title: "创建时间" },
+          { key: "filled_time_text", title: "费用填写时间" },
           {
-            key: "process_code",
-            title: "工序",
-            render: (value, row) => {
-              const processCode = value || "";
-              const processName = row.process_name_cn || processCode || "-";
-              if (!processCode) {
-                return processName;
-              }
-              return (
-                <Link className="table-link" to={`/masterdata?process_code=${encodeURIComponent(processCode)}`}>
-                  {processName}
-                </Link>
-              );
-            }
-          },
-          { key: "report_qty", title: "报工量", render: (value) => toIntText(value) },
-          { key: "report_time", title: "报工时间" }
+            key: "operation",
+            title: "操作",
+            render: (_, row) => (
+              <button
+                type="button"
+                className="table-op-delete"
+                disabled={!row.report_id || Boolean(deletingReportId)}
+                onClick={() => deleteReporting(row.report_id).catch(() => {})}
+              >
+                {deletingReportId === row.report_id ? "删除中..." : "删除"}
+              </button>
+            )
+          }
         ]}
-        rows={reportings}
+        rows={reportRecordRows}
       />
     </section>
   );

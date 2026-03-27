@@ -7,6 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -119,6 +120,17 @@ public class LegacyApiController {
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("items", store.listReportings());
     return body;
+  }
+
+  @DeleteMapping("/reportings/{reportingId}")
+  public ResponseEntity<Map<String, Object>> deleteReporting(
+    HttpServletRequest request,
+    @PathVariable String reportingId,
+    @RequestBody(required = false) Map<String, Object> payload
+  ) {
+    Map<String, Object> body = payload == null ? Map.of() : payload;
+    String requestId = ApiSupport.requireRequestId(request, body);
+    return ApiSupport.ok(requestId, store.deleteReporting(reportingId, requestId, "api"));
   }
 
   @PostMapping("/reset")

@@ -2,11 +2,13 @@ package com.autoproduction.mvp.core;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.autoproduction.mvp.module.integration.erp.ErpDataManager;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,6 +42,7 @@ public class MvpStoreService {
   private static final long DEFAULT_SIM_SEED = 20260322L;
   private static final int DEFAULT_SIM_DAILY_SALES = 20;
   private static final String DEFAULT_SIM_SCENARIO = "STABLE";
+  private static final ZoneId SIMULATION_ZONE = ZoneId.of("Asia/Shanghai");
   private static final String STRATEGY_KEY_ORDER_FIRST = "KEY_ORDER_FIRST";
   private static final String STRATEGY_MAX_CAPACITY_FIRST = "MAX_CAPACITY_FIRST";
   private static final String STRATEGY_MIN_DELAY_FIRST = "MIN_DELAY_FIRST";
@@ -68,6 +71,7 @@ public class MvpStoreService {
     Map.entry("PROD_CATH", "导管"),
     Map.entry("PROD_BALLOON", "球囊"),
     Map.entry("PROD_STENT", "支架"),
+    Map.entry("PROD_ANGIO_CATH", "造影导管"),
     Map.entry("PROD_UNKNOWN", "未知产品")
   );
   private static final Map<String, String> PROCESS_NAME_CN = Map.ofEntries(
@@ -75,7 +79,32 @@ public class MvpStoreService {
     Map.entry("PROC_ASSEMBLY", "装配"),
     Map.entry("PROC_BALLOON", "球囊成型"),
     Map.entry("PROC_STENT", "支架成型"),
-    Map.entry("PROC_STERILE", "灭菌")
+    Map.entry("PROC_STERILE", "灭菌"),
+    Map.entry("Z470", "造影导管切导管"),
+    Map.entry("Z3910", "造影导管扩孔"),
+    Map.entry("Z3920", "造影导管磨削"),
+    Map.entry("Z390", "造影导管搭接"),
+    Map.entry("Z340", "造影导管全检导管"),
+    Map.entry("Z410", "造影导管融飞边"),
+    Map.entry("Z460", "造影导管穿白边"),
+    Map.entry("Z420", "造影导管焊接"),
+    Map.entry("Z320", "造影导管修飞边"),
+    Map.entry("Z310", "造影导管烫飞边"),
+    Map.entry("Z350", "造影导管检验白色端"),
+    Map.entry("Z480", "造影导管毛化"),
+    Map.entry("Z370", "造影导管手柄点胶"),
+    Map.entry("Z380", "造影导管手柄上护套"),
+    Map.entry("Z290", "造影导管清洗、吹水"),
+    Map.entry("Z450", "造影导管穿衬芯"),
+    Map.entry("Z360", "造影导管塑型"),
+    Map.entry("Z270", "造影导管检漏"),
+    Map.entry("Z4830", "造影导管包装"),
+    Map.entry("Z500", "造影导管全检（包装）"),
+    Map.entry("W130", "W贴产品标签（大标）"),
+    Map.entry("W140", "W贴产品标签（小标）"),
+    Map.entry("W160", "W全检导管"),
+    Map.entry("W150", "W导管中盒(说明书)"),
+    Map.entry("W030", "W包装打包")
   );
   private static final Map<String, String> STATUS_NAME_CN = Map.ofEntries(
     Map.entry("OPEN", "待处理"),
@@ -156,6 +185,106 @@ public class MvpStoreService {
     Map.entry("NIGHT", "夜班"),
     Map.entry("D", "白班"),
     Map.entry("N", "夜班")
+  );
+  private static final String WEEKEND_REST_MODE_NONE = "NONE";
+  private static final String WEEKEND_REST_MODE_SINGLE = "SINGLE";
+  private static final String WEEKEND_REST_MODE_DOUBLE = "DOUBLE";
+  private static final String DATE_SHIFT_MODE_REST = "REST";
+  private static final String DATE_SHIFT_MODE_DAY = "DAY";
+  private static final String DATE_SHIFT_MODE_NIGHT = "NIGHT";
+  private static final String DATE_SHIFT_MODE_BOTH = "BOTH";
+  private static final Set<String> CN_STATUTORY_HOLIDAY_DATE_SET = Set.of(
+    "2024-01-01",
+    "2024-02-10",
+    "2024-02-11",
+    "2024-02-12",
+    "2024-02-13",
+    "2024-02-14",
+    "2024-02-15",
+    "2024-02-16",
+    "2024-02-17",
+    "2024-04-04",
+    "2024-04-05",
+    "2024-04-06",
+    "2024-05-01",
+    "2024-05-02",
+    "2024-05-03",
+    "2024-05-04",
+    "2024-05-05",
+    "2024-06-08",
+    "2024-06-09",
+    "2024-06-10",
+    "2024-09-15",
+    "2024-09-16",
+    "2024-09-17",
+    "2024-10-01",
+    "2024-10-02",
+    "2024-10-03",
+    "2024-10-04",
+    "2024-10-05",
+    "2024-10-06",
+    "2024-10-07",
+    "2025-01-01",
+    "2025-01-28",
+    "2025-01-29",
+    "2025-01-30",
+    "2025-01-31",
+    "2025-02-01",
+    "2025-02-02",
+    "2025-02-03",
+    "2025-02-04",
+    "2025-04-04",
+    "2025-04-05",
+    "2025-04-06",
+    "2025-05-01",
+    "2025-05-02",
+    "2025-05-03",
+    "2025-05-04",
+    "2025-05-05",
+    "2025-05-31",
+    "2025-06-01",
+    "2025-06-02",
+    "2025-10-01",
+    "2025-10-02",
+    "2025-10-03",
+    "2025-10-04",
+    "2025-10-05",
+    "2025-10-06",
+    "2025-10-07",
+    "2025-10-08",
+    "2026-01-01",
+    "2026-01-02",
+    "2026-01-03",
+    "2026-02-15",
+    "2026-02-16",
+    "2026-02-17",
+    "2026-02-18",
+    "2026-02-19",
+    "2026-02-20",
+    "2026-02-21",
+    "2026-02-22",
+    "2026-02-23",
+    "2026-04-04",
+    "2026-04-05",
+    "2026-04-06",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-09-25",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+    "2026-10-05",
+    "2026-10-06",
+    "2026-10-07"
   );
   private static final Map<String, String> DEPENDENCY_NAME_CN = Map.ofEntries(
     Map.entry("FS", "完成-开始"),
@@ -257,18 +386,18 @@ public class MvpStoreService {
   };
 
   private static final Map<String, String> ALERT_TYPE_NAME_CN = Map.ofEntries(
-    Map.entry("PROGRESS_GAP", "进度偏差"),
-    Map.entry("EQUIPMENT_DOWN", "设备故障")
+    Map.entry("PROGRESS_GAP", "\u8fdb\u5ea6\u504f\u5dee"),
+    Map.entry("EQUIPMENT_DOWN", "\u8bbe\u5907\u6545\u969c")
   );
   private static final Map<String, String> SEVERITY_NAME_CN = Map.ofEntries(
-    Map.entry("CRITICAL", "严重"),
-    Map.entry("WARN", "警告"),
-    Map.entry("INFO", "提示")
+    Map.entry("CRITICAL", "\u4e25\u91cd"),
+    Map.entry("WARN", "\u8b66\u544a"),
+    Map.entry("INFO", "\u63d0\u793a")
   );
 
   private final Object lock = new Object();
   private final ObjectMapper objectMapper = new ObjectMapper();
-  private final ErpSqliteOrderLoader erpSqliteOrderLoader;
+  private final ErpDataManager erpDataManager;
   private final AtomicInteger reportingSeq = new AtomicInteger(0);
   private final AtomicInteger replanSeq = new AtomicInteger(0);
   private final AtomicInteger alertSeq = new AtomicInteger(0);
@@ -279,10 +408,14 @@ public class MvpStoreService {
   private final AtomicInteger simulationEventSeq = new AtomicInteger(0);
   private MvpDomain.State state = SeedDataFactory.build();
   private final SimulationState simulationState = new SimulationState();
+  private final Map<String, Double> finalCompletedByOrderProductCache = new HashMap<>();
+  private final Map<String, CachedOrderPoolMaterials> orderPoolMaterialsCache = new HashMap<>();
+  private final Map<String, CachedOrderPoolMaterials> materialChildrenByParentCache = new HashMap<>();
+  private int finalCompletedSyncCursor = 0;
   private ManualSimulationSnapshot manualSimulationSnapshot;
 
-  public MvpStoreService(ErpSqliteOrderLoader erpSqliteOrderLoader) {
-    this.erpSqliteOrderLoader = erpSqliteOrderLoader;
+  public MvpStoreService(ErpDataManager erpDataManager) {
+    this.erpDataManager = erpDataManager;
     resetSimulationState(DEFAULT_SIM_SEED, DEFAULT_SIM_SCENARIO, DEFAULT_SIM_DAILY_SALES);
   }
 
@@ -298,6 +431,10 @@ public class MvpStoreService {
       productionSeq.set(0);
       simulationEventSeq.set(0);
       manualSimulationSnapshot = null;
+      finalCompletedByOrderProductCache.clear();
+      orderPoolMaterialsCache.clear();
+      materialChildrenByParentCache.clear();
+      finalCompletedSyncCursor = 0;
       resetSimulationState(DEFAULT_SIM_SEED, DEFAULT_SIM_SCENARIO, DEFAULT_SIM_DAILY_SALES);
     }
   }
@@ -314,26 +451,179 @@ public class MvpStoreService {
     synchronized (lock) {
       syncCompletedQtyFromFinalProcessReports();
       refreshOrderStatuses(simulationState.currentDate == null ? state.startDate : simulationState.currentDate);
-      return state.orders.stream()
-        .map(this::toOrderPoolItem)
-        .filter(row -> {
-          if (filters == null) {
-            return true;
-          }
-          if (filters.containsKey("status") && !Objects.equals(filters.get("status"), row.get("status"))) {
-            return false;
-          }
-          if (filters.containsKey("frozen_flag")
-            && Integer.parseInt(filters.get("frozen_flag")) != (int) row.get("frozen_flag")) {
-            return false;
-          }
-          if (filters.containsKey("urgent_flag")
-            && Integer.parseInt(filters.get("urgent_flag")) != (int) row.get("urgent_flag")) {
-            return false;
-          }
-          return true;
-        })
+      Map<String, Map<String, Object>> rowByOrderNo = new LinkedHashMap<>();
+      for (MvpDomain.Order order : state.orders) {
+        Map<String, Object> row = toOrderPoolItem(order);
+        String orderNo = string(row, "order_no", null);
+        if (orderNo != null && !orderNo.isBlank()) {
+          rowByOrderNo.put(orderNo, row);
+        }
+      }
+
+      List<Map<String, Object>> erpRows = erpDataManager.getProductionOrders();
+      for (Map<String, Object> erpRow : erpRows) {
+        Map<String, Object> row = toOrderPoolItemFromErp(erpRow);
+        String orderNo = string(row, "order_no", null);
+        if (orderNo == null || orderNo.isBlank()) {
+          continue;
+        }
+        rowByOrderNo.putIfAbsent(orderNo, row);
+      }
+
+      return rowByOrderNo.values().stream()
+        .filter(row -> filterOrderPoolRow(row, filters))
         .toList();
+    }
+  }
+
+  public List<Map<String, Object>> listOrderPoolMaterials(String orderNo) {
+    return listOrderPoolMaterials(orderNo, false);
+  }
+
+  public List<Map<String, Object>> listOrderPoolMaterials(String orderNo, boolean refreshFromErp) {
+    synchronized (lock) {
+      String normalizedOrderNo = orderNo == null ? "" : orderNo.trim();
+      if (normalizedOrderNo.isBlank()) {
+        throw badRequest("orderNo is required.");
+      }
+
+      if (!refreshFromErp) {
+        CachedOrderPoolMaterials cached = orderPoolMaterialsCache.get(normalizedOrderNo);
+        if (cached != null) {
+          return copyMaterialRows(cached.rows);
+        }
+      }
+
+      Map<String, Object> orderRow = erpDataManager.getProductionOrders().stream()
+        .filter(row -> normalizedOrderNo.equals(string(row, "production_order_no", null)))
+        .findFirst()
+        .orElse(null);
+      if (orderRow == null) {
+        orderPoolMaterialsCache.put(normalizedOrderNo, new CachedOrderPoolMaterials(List.of(), OffsetDateTime.now(ZoneOffset.UTC).toString()));
+        return List.of();
+      }
+      String materialListNo = string(orderRow, "material_list_no", null);
+      String productCode = string(orderRow, "product_code", null);
+      List<Map<String, Object>> rawRows = erpDataManager.getProductionMaterialIssuesByOrder(
+        normalizedOrderNo,
+        materialListNo,
+        refreshFromErp
+      );
+      boolean hasExpandedBomRows = rawRows.stream()
+        .anyMatch(row -> "ERP_API_BOM_VIEW_ENTRY".equalsIgnoreCase(string(row, "erp_source_table", "")));
+      if (!hasExpandedBomRows) {
+        String ppBomNo = rawRows.stream()
+          .map(row -> string(row, "pick_material_bill_no", string(row, "source_bill_no", null)))
+          .filter(value -> value != null && value.startsWith("PPBOM"))
+          .findFirst()
+          .orElse(null);
+        if (ppBomNo != null) {
+          List<Map<String, Object>> ppBomRows = erpDataManager.getProductionMaterialIssuesByOrder(null, ppBomNo, refreshFromErp);
+          if (!ppBomRows.isEmpty()) {
+            rawRows = ppBomRows;
+          }
+        }
+      }
+      String normalizedProductCode = normalizeMaterialCode(productCode);
+      String normalizedMaterialListNo = normalizeMaterialCode(materialListNo);
+      String normalizedMaterialListBaseCode = materialListBaseCode(normalizedMaterialListNo);
+      List<Map<String, Object>> rows = new ArrayList<>();
+      Set<String> seenCodes = new HashSet<>();
+      for (Map<String, Object> rawRow : rawRows) {
+        String code = normalizeMaterialCode(string(rawRow, "child_material_code", null));
+        if (code.isBlank() || "UNKNOWN".equals(code) || !seenCodes.add(code)) {
+          continue;
+        }
+        if (
+          isSameMaterialCode(code, normalizedProductCode)
+            || isSameMaterialCode(code, normalizedMaterialListNo)
+            || isSameMaterialCode(code, normalizedMaterialListBaseCode)
+        ) {
+          continue;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("order_no", normalizedOrderNo);
+        row.put("material_list_no", materialListNo);
+        row.put("child_material_code", code);
+        row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+        row.put("required_qty", number(rawRow, "required_qty", 0d));
+        row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
+        row.put("source_bill_type", string(rawRow, "source_bill_type", ""));
+        row.put("pick_material_bill_no", string(rawRow, "pick_material_bill_no", ""));
+        row.put("issue_date", string(rawRow, "issue_date", ""));
+        Map<String, Object> supplyInfo = erpDataManager.getMaterialSupplyInfo(code);
+        row.put("child_material_supply_type", string(supplyInfo, "supply_type", "UNKNOWN"));
+        row.put("child_material_supply_type_name_cn", string(supplyInfo, "supply_type_name_cn", "\u672A\u77E5"));
+        rows.add(localizeRow(row));
+      }
+      rows.sort(Comparator.comparing(row -> string(row, "child_material_code", "")));
+      List<Map<String, Object>> cachedRows = freezeMaterialRows(rows);
+      orderPoolMaterialsCache.put(
+        normalizedOrderNo,
+        new CachedOrderPoolMaterials(cachedRows, OffsetDateTime.now(ZoneOffset.UTC).toString())
+      );
+      return copyMaterialRows(cachedRows);
+    }
+  }
+
+  public List<Map<String, Object>> listMaterialChildrenByParentCode(String parentMaterialCode) {
+    return listMaterialChildrenByParentCode(parentMaterialCode, false);
+  }
+
+  public List<Map<String, Object>> listMaterialChildrenByParentCode(String parentMaterialCode, boolean refreshFromErp) {
+    synchronized (lock) {
+      String normalizedParentCode = normalizeMaterialCode(parentMaterialCode);
+      if (normalizedParentCode.isBlank()) {
+        throw badRequest("parentMaterialCode is required.");
+      }
+
+      if (!refreshFromErp) {
+        CachedOrderPoolMaterials cached = materialChildrenByParentCache.get(normalizedParentCode);
+        if (cached != null) {
+          return copyMaterialRows(cached.rows);
+        }
+      }
+
+      List<Map<String, Object>> rawRows = erpDataManager.getProductionMaterialIssuesByOrder(
+        null,
+        normalizedParentCode,
+        refreshFromErp
+      );
+      String normalizedParentBaseCode = materialListBaseCode(normalizedParentCode);
+      List<Map<String, Object>> rows = new ArrayList<>();
+      Set<String> seenCodes = new HashSet<>();
+      for (Map<String, Object> rawRow : rawRows) {
+        String code = normalizeMaterialCode(string(rawRow, "child_material_code", null));
+        if (code.isBlank() || "UNKNOWN".equals(code) || !seenCodes.add(code)) {
+          continue;
+        }
+        if (
+          isSameMaterialCode(code, normalizedParentCode)
+            || isSameMaterialCode(code, normalizedParentBaseCode)
+        ) {
+          continue;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("parent_material_code", normalizedParentCode);
+        row.put("child_material_code", code);
+        row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+        row.put("required_qty", number(rawRow, "required_qty", 0d));
+        row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
+        row.put("source_bill_type", string(rawRow, "source_bill_type", ""));
+        row.put("pick_material_bill_no", string(rawRow, "pick_material_bill_no", ""));
+        row.put("issue_date", string(rawRow, "issue_date", ""));
+        Map<String, Object> supplyInfo = erpDataManager.getMaterialSupplyInfo(code);
+        row.put("child_material_supply_type", string(supplyInfo, "supply_type", "UNKNOWN"));
+        row.put("child_material_supply_type_name_cn", string(supplyInfo, "supply_type_name_cn", "\u672A\u77E5"));
+        rows.add(localizeRow(row));
+      }
+      rows.sort(Comparator.comparing(row -> string(row, "child_material_code", "")));
+      List<Map<String, Object>> cachedRows = freezeMaterialRows(rows);
+      materialChildrenByParentCache.put(
+        normalizedParentCode,
+        new CachedOrderPoolMaterials(cachedRows, OffsetDateTime.now(ZoneOffset.UTC).toString())
+      );
+      return copyMaterialRows(cachedRows);
     }
   }
 
@@ -392,6 +682,9 @@ public class MvpStoreService {
       List<String> lockedOrders = new ArrayList<>();
       List<MvpDomain.Order> orders = new ArrayList<>();
       for (MvpDomain.Order order : state.orders) {
+        if (!hasRemainingQty(order)) {
+          continue;
+        }
         if (order.lockFlag) {
           lockedOrders.add(order.orderNo);
         }
@@ -456,6 +749,27 @@ public class MvpStoreService {
         string(options, "reason", null),
         perfContext
       );
+
+      boolean compactResponse = bool(
+        options,
+        "compact_response",
+        bool(options, "compactResponse", false)
+      );
+      if (compactResponse) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("request_id", requestId);
+        out.put("version_no", schedule.versionNo);
+        out.put("versionNo", schedule.versionNo);
+        out.put("status", schedule.status);
+        out.put("generated_at", schedule.generatedAt == null ? null : schedule.generatedAt.toString());
+        out.put("generatedAt", schedule.generatedAt == null ? null : schedule.generatedAt.toString());
+        out.put(
+          "schedule_completion_rate",
+          number(schedule.metrics, "schedule_completion_rate", number(schedule.metrics, "scheduleCompletionRate", 0d))
+        );
+        out.put("unscheduled_task_count", schedule.unscheduled == null ? 0 : schedule.unscheduled.size());
+        return out;
+      }
       return toScheduleMap(schedule);
     }
   }
@@ -578,6 +892,7 @@ public class MvpStoreService {
       state.reportings.add(reporting);
       appendAudit("REPORTING", reporting.reportingId, "CREATE_REPORTING", operator, requestId, null);
       appendInbox("MES_REPORTING", reporting.reportingId, requestId, "SUCCESS", null);
+      erpDataManager.refreshTriggered("MES_REPORTING", requestId, "reporting created");
 
       Map<String, Object> triggered = maybeTriggerProgressGapReplan(reporting, requestId, operator);
       if (triggered != null) {
@@ -586,6 +901,60 @@ public class MvpStoreService {
       }
 
       return toReportingMap(reporting);
+    }
+  }
+
+  public Map<String, Object> deleteReporting(String reportingId, String requestId, String operator) {
+    synchronized (lock) {
+      String normalizedReportingId = normalizeCode(reportingId);
+      if (normalizedReportingId.isBlank()) {
+        throw badRequest("reportingId is required.");
+      }
+
+      int targetIndex = -1;
+      for (int i = 0; i < state.reportings.size(); i += 1) {
+        MvpDomain.Reporting current = state.reportings.get(i);
+        if (normalizeCode(current.reportingId).equals(normalizedReportingId)) {
+          targetIndex = i;
+          break;
+        }
+      }
+      if (targetIndex < 0) {
+        throw notFound("Reporting %s not found.".formatted(reportingId));
+      }
+
+      MvpDomain.Reporting removed = state.reportings.remove(targetIndex);
+      if (isFinalProcessForProduct(removed.productCode, removed.processCode)) {
+        try {
+          MvpDomain.Order order = findOrder(removed.orderNo);
+          for (MvpDomain.OrderItem item : order.items) {
+            if (!Objects.equals(item.productCode, removed.productCode)) {
+              continue;
+            }
+            item.completedQty = Math.max(0d, item.completedQty - removed.reportQty);
+          }
+          updateOrderProgressFacts(order);
+        } catch (MvpServiceException ignore) {
+          // Order may have been removed by other flows; keep deletion successful.
+        }
+      }
+
+      if (state.reportings.size() < finalCompletedSyncCursor) {
+        finalCompletedByOrderProductCache.clear();
+        finalCompletedSyncCursor = 0;
+      }
+
+      appendAudit("REPORTING", removed.reportingId, "DELETE_REPORTING", operator, requestId, null);
+      erpDataManager.refreshTriggered("MES_REPORTING", requestId, "reporting deleted");
+
+      Map<String, Object> result = new LinkedHashMap<>();
+      result.put("request_id", requestId);
+      result.put("report_id", removed.reportingId);
+      result.put("order_no", removed.orderNo);
+      result.put("product_code", removed.productCode);
+      result.put("process_code", removed.processCode);
+      result.put("deleted", true);
+      return result;
     }
   }
 
@@ -655,6 +1024,7 @@ public class MvpStoreService {
         ));
         appendAudit("ERP_WRITEBACK", scheduleVersion, "WRITE_SCHEDULE_RESULTS", operator, requestId, null);
         appendOutbox("ERP_SCHEDULE_RESULTS", scheduleVersion, requestId, failedCount == 0 ? "SUCCESS" : "PARTIAL", null);
+        erpDataManager.refreshTriggered("ERP_SCHEDULE_RESULTS", requestId, "schedule result writeback");
         return Map.of("request_id", requestId, "success_count", successCount, "failed_count", failedCount);
       });
     }
@@ -689,6 +1059,7 @@ public class MvpStoreService {
         ));
         appendAudit("ERP_WRITEBACK", scheduleVersion, "WRITE_SCHEDULE_STATUS", operator, requestId, null);
         appendOutbox("ERP_SCHEDULE_STATUS", scheduleVersion, requestId, failedCount == 0 ? "SUCCESS" : "PARTIAL", null);
+        erpDataManager.refreshTriggered("ERP_SCHEDULE_STATUS", requestId, "schedule status writeback");
         return Map.of("request_id", requestId, "success_count", successCount, "failed_count", failedCount);
       });
     }
@@ -733,6 +1104,7 @@ public class MvpStoreService {
         ));
         appendAudit("WIP_LOT", wipLotId, "INGEST_WIP_EVENT", operator, requestId, null);
         appendInbox("MES_WIP_EVENT", wipLotId, requestId, "SUCCESS", null);
+        erpDataManager.refreshTriggered("MES_WIP_EVENT", requestId, "wip lot event accepted");
         return Map.of("request_id", requestId, "accepted", true, "message", "WIP event accepted.");
       });
     }
@@ -822,7 +1194,16 @@ public class MvpStoreService {
 
   public Map<String, Object> getSimulationState(String requestId) {
     synchronized (lock) {
+      alignSimulationDateToToday();
       return buildSimulationStateResponse(requestId);
+    }
+  }
+
+  private void alignSimulationDateToToday() {
+    LocalDate today = LocalDate.now(SIMULATION_ZONE);
+    if (simulationState.currentDate == null || simulationState.currentDate.isBefore(today)) {
+      simulationState.currentDate = today;
+      refreshOrderStatuses(today);
     }
   }
 
@@ -856,13 +1237,13 @@ public class MvpStoreService {
         appendSimulationEvent(
           simulationState.currentDate,
           "SIM_RESET",
-          "仿真状态已重置。",
+          "\u4eff\u771f\u72b6\u6001\u5df2\u91cd\u7f6e\u3002",
           requestId,
           Map.of()
         );
         appendAudit("SIMULATION", "SIMULATION_STATE", "RESET_SIMULATION", operator, requestId, null);
         Map<String, Object> out = buildSimulationStateResponse(requestId);
-        out.put("message", "仿真状态已重置。");
+        out.put("message", "娴犺法婀￠悩鑸碘偓浣稿嚒闁插秶鐤嗛妴");
         return out;
       });
     }
@@ -914,13 +1295,14 @@ public class MvpStoreService {
           generatePayload.put("autoReplan", false);
           generatePayload.put("reason", "SIM_AUTO_DAILY");
           generatePayload.put("request_id", requestId + ":generate:" + i);
+          generatePayload.put("compact_response", true);
           Map<String, Object> schedule = generateSchedule(generatePayload, requestId + ":generate:" + i, "simulator");
           String versionNo = string(schedule, "version_no", string(schedule, "versionNo", null));
           totalVersions += 1;
           appendSimulationEvent(
             businessDate,
             "SCHEDULE_GENERATED",
-            "已生成当日仿真排产版本。",
+            "\u5df2\u751f\u6210\u6392\u4ea7\u7248\u672c\u3002",
             requestId,
             Map.of("version_no", versionNo, "base_version_no", baseVersionNo == null ? "" : baseVersionNo)
           );
@@ -933,7 +1315,7 @@ public class MvpStoreService {
           appendSimulationEvent(
             businessDate,
             "SCHEDULE_PUBLISHED",
-            "已发布当日仿真排产版本。",
+            "\u5df2\u53d1\u5e03\u6392\u4ea7\u7248\u672c\u3002",
             requestId,
             Map.of("version_no", versionNo)
           );
@@ -979,11 +1361,11 @@ public class MvpStoreService {
         summary.put("daily_kpis", dailySummaries);
         simulationState.lastRunSummary = deepCopyMap(summary);
 
-        appendAudit("SIMULATION", "SIM-RUN", "RUN_SIMULATION", operator, requestId, "仿真运行完成。");
+        appendAudit("SIMULATION", "SIM-RUN", "RUN_SIMULATION", operator, requestId, "娴犺法婀℃潻鎰攽鐎瑰本鍨氶妴");
         appendSimulationEvent(
           simulationState.currentDate.minusDays(1),
           "SIM_RUN_DONE",
-          "仿真运行完成。",
+          "\u4eff\u771f\u8fd0\u884c\u5b8c\u6210\u3002",
           requestId,
           Map.of(
             "days", days,
@@ -1014,8 +1396,8 @@ public class MvpStoreService {
         String productionOrderNo = "MO-MANUAL-%05d".formatted(productionSeq.incrementAndGet());
 
         MvpDomain.OrderBusinessData data = buildSimulationBusinessData(businessDate, dueDate, salesOrderNo, productCode, qty);
-        data.customerRemark = "手动模拟订单";
-        data.weeklyMonthlyPlanRemark = "手动模拟";
+        data.customerRemark = "閹靛濮╁Ο鈩冨珯鐠併垹宕";
+        data.weeklyMonthlyPlanRemark = "閹靛濮╁Ο鈩冨珯";
         data.note = "MANUAL_SIM";
 
         MvpDomain.Order order = new MvpDomain.Order(
@@ -1035,7 +1417,7 @@ public class MvpStoreService {
         appendSimulationEvent(
           businessDate,
           "ORDER_CONVERTED",
-          "手动模拟已新增生产订单。",
+          "\u5df2\u5c06\u9500\u552e\u8ba2\u5355\u8f6c\u6362\u4e3a\u751f\u4ea7\u8ba2\u5355\u3002",
           requestId,
           Map.of(
             "production_order_no", productionOrderNo,
@@ -1045,7 +1427,7 @@ public class MvpStoreService {
             "order_qty", qty
           )
         );
-        appendAudit("SIMULATION", productionOrderNo, "CREATE_ORDER", operator, requestId, "手动模拟新增生产订单");
+        appendAudit("SIMULATION", productionOrderNo, "CREATE_ORDER", operator, requestId, "閹靛濮╁Ο鈩冨珯閺傛澘顤冮悽鐔堕獓鐠併垹宕");
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("request_id", requestId);
@@ -1083,7 +1465,14 @@ public class MvpStoreService {
         simulationState.dailySalesOrderCount = dailySales;
         phaseDurationMs.put("prepare_input", elapsedMillis(phaseStart));
 
-        LocalDate businessDate = simulationState.currentDate;
+        LocalDate businessDate = simulationState.currentDate == null ? state.startDate : simulationState.currentDate;
+        String clientDateText = string(payload, "client_date", string(payload, "clientDate", null));
+        LocalDate clientDate = parseLocalDateFlexible(clientDateText, null);
+        LocalDate baseClientDate = clientDate == null ? LocalDate.now() : clientDate;
+        LocalDate nextDayFromClientDate = baseClientDate.plusDays(1);
+        if (businessDate.isBefore(nextDayFromClientDate)) {
+          businessDate = nextDayFromClientDate;
+        }
         Random dayRandom = new Random(seed + businessDate.toEpochDay() * 997L + 17L);
         phaseStart = System.nanoTime();
         Map<String, Object> capacity = rebuildPlanningHorizon(businessDate, scenario, dayRandom, requestId + ":manual:capacity");
@@ -1096,6 +1485,7 @@ public class MvpStoreService {
         generatePayload.put("autoReplan", false);
         generatePayload.put("reason", "MANUAL_SIM_ADVANCE");
         generatePayload.put("request_id", requestId + ":manual:generate");
+        generatePayload.put("compact_response", true);
         phaseStart = System.nanoTime();
         Map<String, Object> schedule = generateSchedule(generatePayload, requestId + ":manual:generate", "simulator");
         String versionNo = string(schedule, "version_no", string(schedule, "versionNo", null));
@@ -1186,7 +1576,7 @@ public class MvpStoreService {
         appendSimulationEvent(
           businessDate,
           "SIM_RUN_DONE",
-          "手动模拟推进一天完成。",
+          "\u4eff\u771f\u8fd0\u884c\u5b8c\u6210\u3002",
           requestId,
           Map.of(
             "version_no",
@@ -1230,12 +1620,12 @@ public class MvpStoreService {
       return runIdempotent(requestId, "MANUAL_SIM_RESET", () -> {
         if (manualSimulationSnapshot == null) {
           Map<String, Object> out = buildSimulationStateResponse(requestId);
-          out.put("message", "当前没有可重置的手动模拟会话。");
+          out.put("message", "瑜版挸澧犲▽鈩冩箒閸欘垶鍣哥純顔炬畱閹靛濮╁Ο鈩冨珯娴兼俺鐦介妴");
           return out;
         }
         restoreManualSimulationSnapshot();
         Map<String, Object> out = buildSimulationStateResponse(requestId);
-        out.put("message", "已恢复到手动模拟前的数据状态。");
+        out.put("message", "瀹稿弶浠径宥呭煂閹靛濮╁Ο鈩冨珯閸撳秶娈戦弫鐗堝祦閻樿埖鈧降鈧");
         return out;
       });
     }
@@ -2154,7 +2544,7 @@ public class MvpStoreService {
 
   public List<Map<String, Object>> listSalesOrderLines() {
     synchronized (lock) {
-      List<Map<String, Object>> erpRows = erpSqliteOrderLoader.loadSalesOrderLines();
+      List<Map<String, Object>> erpRows = erpDataManager.getSalesOrderLines();
       if (!erpRows.isEmpty()) {
         return erpRows;
       }
@@ -2185,13 +2575,13 @@ public class MvpStoreService {
 
   public List<Map<String, Object>> listErpSalesOrderHeadersRaw() {
     synchronized (lock) {
-      return erpSqliteOrderLoader.loadSalesOrderHeadersRaw();
+      return erpDataManager.getSalesOrderHeadersRaw();
     }
   }
 
   public List<Map<String, Object>> listErpSalesOrderLinesRaw() {
     synchronized (lock) {
-      return erpSqliteOrderLoader.loadSalesOrderLinesRaw();
+      return erpDataManager.getSalesOrderLinesRaw();
     }
   }
 
@@ -2217,9 +2607,15 @@ public class MvpStoreService {
     }
   }
 
+  public List<Map<String, Object>> listPurchaseOrders() {
+    synchronized (lock) {
+      return erpDataManager.getPurchaseOrders();
+    }
+  }
+
   public List<Map<String, Object>> listProductionOrders() {
     synchronized (lock) {
-      List<Map<String, Object>> erpRows = erpSqliteOrderLoader.loadProductionOrders();
+      List<Map<String, Object>> erpRows = erpDataManager.getProductionOrders();
       if (!erpRows.isEmpty()) {
         return erpRows;
       }
@@ -2291,13 +2687,13 @@ public class MvpStoreService {
 
   public List<Map<String, Object>> listErpProductionOrderHeadersRaw() {
     synchronized (lock) {
-      return erpSqliteOrderLoader.loadProductionOrderHeadersRaw();
+      return erpDataManager.getProductionOrderHeadersRaw();
     }
   }
 
   public List<Map<String, Object>> listErpProductionOrderLinesRaw() {
     synchronized (lock) {
-      return erpSqliteOrderLoader.loadProductionOrderLinesRaw();
+      return erpDataManager.getProductionOrderLinesRaw();
     }
   }
 
@@ -2445,13 +2841,13 @@ public class MvpStoreService {
         sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, MONTHLY_PLAN_HEADERS_CN.length - 1));
 
         Row groupRow = sheet.createRow(1);
-        writeCell(groupRow, 0, "订单基本信息", headerStyle);
+        writeCell(groupRow, 0, "鐠併垹宕熼崺鐑樻拱娣団剝浼", headerStyle);
         sheet.addMergedRegion(new CellRangeAddress(1, 1, 0, 13));
-        writeCell(groupRow, 16, "半成品信息", headerStyle);
+        writeCell(groupRow, 16, "閸楀﹥鍨氶崫浣蜂繆閹", headerStyle);
         sheet.addMergedRegion(new CellRangeAddress(1, 1, 16, 21));
-        writeCell(groupRow, 22, "订单排产信息", headerStyle);
+        writeCell(groupRow, 22, "鐠併垹宕熼幒鎺嶉獓娣団剝浼", headerStyle);
         sheet.addMergedRegion(new CellRangeAddress(1, 1, 22, 24));
-        writeCell(groupRow, 25, "订单进度", headerStyle);
+        writeCell(groupRow, 25, "鐠併垹宕熸潻娑樺", headerStyle);
         sheet.addMergedRegion(new CellRangeAddress(1, 1, 25, 28));
 
         Row headerRow = sheet.createRow(2);
@@ -2690,6 +3086,12 @@ public class MvpStoreService {
       out.put("horizon_days", state.horizonDays);
       out.put("shifts_per_day", state.shiftsPerDay);
       out.put("shift_hours", state.shiftHours);
+      out.put("skip_statutory_holidays", state.skipStatutoryHolidays);
+      out.put("weekend_rest_mode", normalizeWeekendRestMode(state.weekendRestMode));
+      out.put(
+        "date_shift_mode_by_date",
+        state.dateShiftModeByDate == null ? Map.of() : new LinkedHashMap<>(state.dateShiftModeByDate)
+      );
       out.put("process_configs", listProcessConfigRowsForEdit());
       out.put("line_topology", listLineTopologyRowsForEdit());
       out.put("section_leader_bindings", listSectionLeaderBindingsRowsForEdit());
@@ -2743,6 +3145,10 @@ public class MvpStoreService {
       if (planningWindowUpdated) {
         updatedRowCount += 1;
       }
+      boolean planningCalendarUpdated = applyPlanningCalendarPatch(payload);
+      if (planningCalendarUpdated) {
+        updatedRowCount += 1;
+      }
 
       boolean hasResourcePool = payload.containsKey("resource_pool") || payload.containsKey("resourcePool");
       List<Map<String, Object>> resourcePool = maps(payload.get("resource_pool"));
@@ -2781,7 +3187,12 @@ public class MvpStoreService {
         "UPDATE_MASTERDATA_CONFIG",
         operator,
         requestId,
-        "updated_rows=" + updatedRowCount + ", planning_window_updated=" + planningWindowUpdated
+        "updated_rows="
+          + updatedRowCount
+          + ", planning_window_updated="
+          + planningWindowUpdated
+          + ", planning_calendar_updated="
+          + planningCalendarUpdated
       );
 
       Map<String, Object> out = getMasterdataConfig(requestId);
@@ -3340,9 +3751,7 @@ public class MvpStoreService {
     int nextHorizonDays = hasHorizonDays
       ? clampInt((int) Math.round(number(payload, "horizon_days", number(payload, "horizonDays", state.horizonDays))), 1, 90)
       : state.horizonDays;
-    int nextShiftsPerDay = hasShiftsPerDay
-      ? clampInt((int) Math.round(number(payload, "shifts_per_day", number(payload, "shiftsPerDay", state.shiftsPerDay))), 1, 2)
-      : state.shiftsPerDay;
+    int nextShiftsPerDay = 2;
 
     if (
       Objects.equals(nextStartDate, state.startDate)
@@ -3359,11 +3768,48 @@ public class MvpStoreService {
     return true;
   }
 
-  private void rebuildMasterdataHorizonWindow() {
-    Map<String, Boolean> openByDateShift = new HashMap<>();
-    for (MvpDomain.ShiftRow row : state.shiftCalendar) {
-      openByDateShift.put(row.date + "#" + normalizeShiftCode(row.shiftCode), row.open);
+  private boolean applyPlanningCalendarPatch(Map<String, Object> payload) {
+    boolean hasSkipStatutoryHolidays = payload.containsKey("skip_statutory_holidays")
+      || payload.containsKey("skipStatutoryHolidays");
+    boolean hasWeekendRestMode = payload.containsKey("weekend_rest_mode") || payload.containsKey("weekendRestMode");
+    boolean hasDateShiftModeByDate = payload.containsKey("date_shift_mode_by_date")
+      || payload.containsKey("dateShiftModeByDate");
+    if (!hasSkipStatutoryHolidays && !hasWeekendRestMode && !hasDateShiftModeByDate) {
+      return false;
     }
+
+    boolean nextSkipStatutoryHolidays = hasSkipStatutoryHolidays
+      ? bool(
+        payload,
+        "skip_statutory_holidays",
+        bool(payload, "skipStatutoryHolidays", state.skipStatutoryHolidays)
+      )
+      : state.skipStatutoryHolidays;
+    String nextWeekendRestMode = hasWeekendRestMode
+      ? normalizeWeekendRestMode(string(payload, "weekend_rest_mode", string(payload, "weekendRestMode", state.weekendRestMode)))
+      : normalizeWeekendRestMode(state.weekendRestMode);
+    Map<String, String> nextDateShiftModeByDate = hasDateShiftModeByDate
+      ? normalizeDateShiftModeByDate(
+        payload.get("date_shift_mode_by_date") != null ? payload.get("date_shift_mode_by_date") : payload.get("dateShiftModeByDate")
+      )
+      : state.dateShiftModeByDate == null ? new LinkedHashMap<>() : new LinkedHashMap<>(state.dateShiftModeByDate);
+
+    if (
+      nextSkipStatutoryHolidays == state.skipStatutoryHolidays
+        && Objects.equals(nextWeekendRestMode, normalizeWeekendRestMode(state.weekendRestMode))
+        && Objects.equals(nextDateShiftModeByDate, state.dateShiftModeByDate)
+    ) {
+      return false;
+    }
+
+    state.skipStatutoryHolidays = nextSkipStatutoryHolidays;
+    state.weekendRestMode = nextWeekendRestMode;
+    state.dateShiftModeByDate = nextDateShiftModeByDate;
+    rebuildMasterdataHorizonWindow();
+    return true;
+  }
+
+  private void rebuildMasterdataHorizonWindow() {
     Map<String, Integer> workersByKey = new HashMap<>();
     for (MvpDomain.ResourceRow row : state.workerPools) {
       workersByKey.put(row.date + "#" + normalizeShiftCode(row.shiftCode) + "#" + normalizeCode(row.processCode), row.available);
@@ -3407,7 +3853,7 @@ public class MvpStoreService {
       for (int s = 0; s < Math.max(1, Math.min(2, state.shiftsPerDay)); s += 1) {
         String shiftCode = shiftCodes[s];
         String dateShiftKey = date + "#" + shiftCode;
-        boolean open = openByDateShift.getOrDefault(dateShiftKey, true);
+        boolean open = isShiftOpenInDateMode(shiftCode, resolveDateShiftMode(date));
         shiftRows.add(new MvpDomain.ShiftRow(date, shiftCode, open));
 
         for (MvpDomain.ProcessConfig process : state.processes) {
@@ -3464,7 +3910,7 @@ public class MvpStoreService {
     if ("D".equals(normalized)) {
       return true;
     }
-    return "N".equals(normalized) && state.shiftsPerDay >= 2;
+    return "N".equals(normalized);
   }
 
   private void applyProcessConfigPatch(List<Map<String, Object>> rows) {
@@ -3829,17 +4275,17 @@ public class MvpStoreService {
     });
 
     List<MvpDomain.ShiftRow> nextShiftCalendar = new ArrayList<>();
-    for (Map.Entry<String, Boolean> entry : openByDateShift.entrySet()) {
-      String[] parts = entry.getKey().split("#", 2);
-      if (parts.length < 2) {
-        continue;
+    String[] shiftCodes = {"D", "N"};
+    for (int i = 0; i < Math.max(1, state.horizonDays); i += 1) {
+      LocalDate date = state.startDate.plusDays(i);
+      for (int s = 0; s < Math.max(1, Math.min(2, state.shiftsPerDay)); s += 1) {
+        String shiftCode = shiftCodes[s];
+        String dateShiftKey = date + "#" + shiftCode;
+        boolean open = openByDateShift.containsKey(dateShiftKey)
+          ? Boolean.TRUE.equals(openByDateShift.get(dateShiftKey))
+          : isShiftOpenInDateMode(shiftCode, resolveDateShiftMode(date));
+        nextShiftCalendar.add(new MvpDomain.ShiftRow(date, shiftCode, open));
       }
-      LocalDate date = parseConfigDate(parts[0]);
-      String shiftCode = normalizeShiftCode(parts[1]);
-      if (date == null || shiftCode.isBlank()) {
-        continue;
-      }
-      nextShiftCalendar.add(new MvpDomain.ShiftRow(date, shiftCode, Boolean.TRUE.equals(entry.getValue())));
     }
     nextShiftCalendar.sort((a, b) -> {
       int byDate = a.date.compareTo(b.date);
@@ -4152,14 +4598,15 @@ public class MvpStoreService {
     try {
       Map<String, Object> generatePayload = new LinkedHashMap<>();
       generatePayload.put("request_id", requestId + ":generate");
-      generatePayload.put("base_version_no", baseVersionNo);
-      generatePayload.put("autoReplan", true);
-      generatePayload.put("strategy_code", strategyCode);
-      Map<String, Object> schedule = generateSchedule(
-        generatePayload,
-        requestId + ":generate",
-        operator
-      );
+          generatePayload.put("base_version_no", baseVersionNo);
+          generatePayload.put("autoReplan", true);
+          generatePayload.put("strategy_code", strategyCode);
+          generatePayload.put("compact_response", true);
+          Map<String, Object> schedule = generateSchedule(
+            generatePayload,
+            requestId + ":generate",
+            operator
+          );
       job.put("result_version_no", schedule.get("versionNo"));
       job.put("status", "DONE");
       job.put("finished_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
@@ -4494,7 +4941,7 @@ public class MvpStoreService {
     );
     data.specModel = string(payload, "spec_model", string(payload, "specModel", ""));
     data.productionBatchNo = string(payload, "production_batch_no", string(payload, "productionBatchNo", "BATCH-" + orderNo));
-    data.packagingForm = string(payload, "packaging_form", string(payload, "packagingForm", "纸塑袋"));
+    data.packagingForm = string(payload, "packaging_form", string(payload, "packagingForm", "缁剧顢栫悮"));
     data.salesOrderNo = string(payload, "sales_order_no", string(payload, "salesOrderNo", "SO-" + orderNo));
     data.productionDateForeignTrade = string(
       payload,
@@ -4528,7 +4975,7 @@ public class MvpStoreService {
     data.weeklyMonthlyPlanRemark = string(
       payload,
       "weekly_monthly_process_plan",
-      string(payload, "process_schedule_remark", string(payload, "weeklyMonthlyPlanRemark", "周计划（3.16-3.22）"))
+      string(payload, "process_schedule_remark", string(payload, "weeklyMonthlyPlanRemark", "閸涖劏顓搁崚鎺炵礄3.16-3.22閿"))
     );
     data.workshopOuterPackagingDate = string(
       payload,
@@ -4540,7 +4987,7 @@ public class MvpStoreService {
     data.workshopCompletedTime = string(payload, "workshop_completed_time", string(payload, "workshopCompletedTime", ""));
     data.outerCompletedQty = number(payload, "outer_completed_qty", number(payload, "outerCompletedQty", 0d));
     data.outerCompletedTime = string(payload, "outer_completed_time", string(payload, "outerCompletedTime", ""));
-    data.matchStatus = string(payload, "match_status", string(payload, "matchStatus", "待匹配"));
+    data.matchStatus = string(payload, "match_status", string(payload, "matchStatus", "瀵板懎灏柊"));
     return data;
   }
 
@@ -4658,31 +5105,53 @@ public class MvpStoreService {
     if (totalQty > 0d && completedQty + 1e-9 >= totalQty) {
       business.outerCompletedQty = round2(completedQty);
       business.outerCompletedTime = OffsetDateTime.now(ZoneOffset.UTC).toString();
-      business.matchStatus = "已匹配";
+      business.matchStatus = "瀹告彃灏柊";
     } else {
       business.outerCompletedQty = round2(Math.max(0d, completedQty - (0.1d * totalQty)));
-      business.matchStatus = "待匹配";
+      business.matchStatus = "瀵板懎灏柊";
     }
   }
 
   private void syncCompletedQtyFromFinalProcessReports() {
-    Map<String, Double> finalCompletedByOrderProduct = new HashMap<>();
-    for (MvpDomain.Reporting reporting : state.reportings) {
+    if (state.reportings == null) {
+      return;
+    }
+
+    int reportingSize = state.reportings.size();
+    boolean fullResync = false;
+    if (reportingSize < finalCompletedSyncCursor) {
+      finalCompletedByOrderProductCache.clear();
+      finalCompletedSyncCursor = 0;
+      fullResync = true;
+    }
+
+    Set<String> touchedOrderNos = new HashSet<>();
+    for (int index = finalCompletedSyncCursor; index < reportingSize; index += 1) {
+      MvpDomain.Reporting reporting = state.reportings.get(index);
       if (!isFinalProcessForProduct(reporting.productCode, reporting.processCode)) {
         continue;
       }
       String key = reporting.orderNo + "#" + reporting.productCode;
-      finalCompletedByOrderProduct.merge(key, reporting.reportQty, Double::sum);
+      finalCompletedByOrderProductCache.merge(key, reporting.reportQty, Double::sum);
+      touchedOrderNos.add(reporting.orderNo);
+    }
+    finalCompletedSyncCursor = reportingSize;
+
+    if (!fullResync && touchedOrderNos.isEmpty()) {
+      return;
     }
 
     for (MvpDomain.Order order : state.orders) {
+      if (!fullResync && !touchedOrderNos.contains(order.orderNo)) {
+        continue;
+      }
       boolean updated = false;
       for (MvpDomain.OrderItem item : order.items) {
         String key = order.orderNo + "#" + item.productCode;
-        if (!finalCompletedByOrderProduct.containsKey(key)) {
+        if (!finalCompletedByOrderProductCache.containsKey(key)) {
           continue;
         }
-        double corrected = Math.min(item.qty, Math.max(0d, finalCompletedByOrderProduct.get(key)));
+        double corrected = Math.min(item.qty, Math.max(0d, finalCompletedByOrderProductCache.get(key)));
         if (Math.abs(item.completedQty - corrected) > 1e-9) {
           item.completedQty = corrected;
           updated = true;
@@ -4733,16 +5202,16 @@ public class MvpStoreService {
   ) {
     MvpDomain.OrderBusinessData data = new MvpDomain.OrderBusinessData();
     data.orderDate = businessDate;
-    data.customerRemark = "模拟订单";
+    data.customerRemark = "濡剝瀚欑拋銏犲礋";
     data.productName = productNameCn(productCode);
     data.specModel = "SIM-" + productCode + "-" + (int) qty;
     data.productionBatchNo = "SIM-" + businessDate.toString().replace("-", "");
-    data.packagingForm = "纸塑袋";
+    data.packagingForm = "缁剧顢栫悮";
     data.salesOrderNo = salesOrderNo;
     data.productionDateForeignTrade = "";
     data.purchaseDueDate = "";
     data.injectionDueDate = "";
-    data.marketRemarkInfo = "仿真自动生成";
+    data.marketRemarkInfo = "娴犺法婀￠懛顏勫З閻㈢喐鍨";
     data.marketDemand = qty;
     data.plannedFinishDate1 = dueDate.toString();
     data.plannedFinishDate2 = dueDate.toString();
@@ -4752,14 +5221,14 @@ public class MvpStoreService {
     data.semiFinishedWip = round2(qty * 0.2d);
     data.needOrderQty = round2(Math.max(0d, qty - data.semiFinishedInventory - data.semiFinishedWip));
     data.pendingInboundQty = round2(data.needOrderQty * 0.5d);
-    data.weeklyMonthlyPlanRemark = "仿真计划";
+    data.weeklyMonthlyPlanRemark = "娴犺法婀＄拋鈥冲灊";
     data.workshopOuterPackagingDate = formatShortDate(dueDate);
     data.note = "SIM";
     data.workshopCompletedQty = 0d;
     data.workshopCompletedTime = "";
     data.outerCompletedQty = 0d;
     data.outerCompletedTime = "";
-    data.matchStatus = "待匹配";
+    data.matchStatus = "瀵板懎灏柊";
     return data;
   }
 
@@ -4797,6 +5266,17 @@ public class MvpStoreService {
       return fallback;
     }
     String normalized = value.trim();
+    if (normalized.matches("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}")) {
+      String[] parts = normalized.replace('/', '-').split("-");
+      try {
+        int year = Integer.parseInt(parts[0]);
+        int month = Integer.parseInt(parts[1]);
+        int day = Integer.parseInt(parts[2]);
+        return LocalDate.of(year, month, day);
+      } catch (Exception ignore) {
+        // continue
+      }
+    }
     if (normalized.length() >= 10) {
       String dateOnly = normalized.substring(0, 10).replace("/", "-");
       try {
@@ -5095,6 +5575,97 @@ public class MvpStoreService {
       items.add(itemRow);
     }
     row.put("items", items);
+    return localizeRow(row);
+  }
+
+  private boolean filterOrderPoolRow(Map<String, Object> row, Map<String, String> filters) {
+    if (filters == null) {
+      return true;
+    }
+    if (filters.containsKey("status") && !Objects.equals(filters.get("status"), row.get("status"))) {
+      return false;
+    }
+    if (filters.containsKey("frozen_flag")
+      && Integer.parseInt(filters.get("frozen_flag")) != (int) number(row, "frozen_flag", 0d)) {
+      return false;
+    }
+    if (filters.containsKey("urgent_flag")
+      && Integer.parseInt(filters.get("urgent_flag")) != (int) number(row, "urgent_flag", 0d)) {
+      return false;
+    }
+    return true;
+  }
+
+  private Map<String, Object> toOrderPoolItemFromErp(Map<String, Object> erpRow) {
+    String orderNo = string(erpRow, "production_order_no", null);
+    String productCode = normalizeCode(string(erpRow, "product_code", "UNKNOWN"));
+    List<Map<String, Object>> processContexts = buildProcessContextsForProduct(productCode);
+    LocalDate expectedStartDate = parseLocalDateFlexible(
+      string(
+        erpRow,
+        "expected_start_date",
+        string(erpRow, "planned_finish_date_1", string(erpRow, "order_date", null))
+      ),
+      null
+    );
+    LocalDate expectedFinishDate = parseLocalDateFlexible(
+      string(
+        erpRow,
+        "expected_finish_date",
+        string(erpRow, "planned_finish_date_2", string(erpRow, "planned_finish_date_1", null))
+      ),
+      null
+    );
+    String expectedStartTime = expectedStartDate == null ? null : toDateTime(expectedStartDate.toString(), "D", true);
+    String expectedFinishTime = expectedFinishDate == null ? null : toDateTime(expectedFinishDate.toString(), "D", true);
+    double totalQty = number(erpRow, "plan_qty", number(erpRow, "order_qty", 0d));
+    double completedQty = number(erpRow, "workshop_completed_qty", number(erpRow, "completed_qty", 0d));
+    double progressRate = totalQty > 0d ? Math.min(100d, Math.max(0d, (completedQty / totalQty) * 100d)) : 0d;
+    String status = string(
+      erpRow,
+      "status",
+      string(erpRow, "production_status", string(erpRow, "order_status", "OPEN"))
+    );
+
+    Map<String, Object> row = new LinkedHashMap<>();
+    row.put("order_no", orderNo);
+    row.put("order_type", "production");
+    row.put("line_no", string(erpRow, "source_line_no", "1"));
+    row.put("product_code", productCode);
+    row.put("product_name_cn", string(erpRow, "product_name_cn", productNameCn(productCode)));
+    row.put("order_qty", totalQty);
+    row.put("completed_qty", round2(completedQty));
+    row.put("remaining_qty", round2(Math.max(0d, totalQty - completedQty)));
+    row.put("progress_rate", round2(progressRate));
+    row.put("expected_start_date", expectedStartDate == null ? null : expectedStartDate.toString());
+    row.put("expected_start_time", expectedStartTime);
+    row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
+    row.put("expected_finish_time", expectedFinishTime);
+    row.put("workshop_codes", joinContextValues(processContexts, "workshop_codes"));
+    row.put("line_codes", joinContextValues(processContexts, "line_codes"));
+    row.put("process_codes", joinContextValues(processContexts, "process_code"));
+    row.put("process_route_summary", summarizeProcessContexts(processContexts));
+    row.put("process_contexts", processContexts);
+    row.put(
+      "expected_due_date",
+      expectedFinishDate == null ? null : toDateTime(expectedFinishDate.toString(), "D", true)
+    );
+    row.put(
+      "promised_due_date",
+      expectedFinishDate == null ? null : toDateTime(expectedFinishDate.toString(), "D", true)
+    );
+    row.put("urgent_flag", 0);
+    row.put("lock_flag", 0);
+    row.put("frozen_flag", 0);
+    row.put("status", status == null || status.isBlank() ? "OPEN" : status);
+    row.put("customer_remark", string(erpRow, "customer_remark", ""));
+    row.put("spec_model", string(erpRow, "spec_model", ""));
+    row.put("production_batch_no", string(erpRow, "production_batch_no", ""));
+    row.put("packaging_form", string(erpRow, "packaging_form", ""));
+    row.put("sales_order_no", string(erpRow, "sales_order_no", string(erpRow, "source_sales_order_no", "")));
+    row.put("workshop_outer_packaging_date", string(erpRow, "workshop_outer_packaging_date", ""));
+    row.put("material_list_no", string(erpRow, "material_list_no", ""));
+    row.put("erp_order_flag", 1);
     return localizeRow(row);
   }
 
@@ -5425,12 +5996,12 @@ public class MvpStoreService {
 
     String alertType = firstString(row, "alert_type");
     if (alertType != null && !alertType.isBlank()) {
-      row.putIfAbsent("alert_type_name_cn", alertTypeNameCn(alertType));
+      row.put("alert_type_name_cn", alertTypeNameCn(alertType));
     }
 
     String severity = firstString(row, "severity");
     if (severity != null && !severity.isBlank()) {
-      row.putIfAbsent("severity_name_cn", severityNameCn(severity));
+      row.put("severity_name_cn", severityNameCn(severity));
     }
 
     String commandType = firstString(row, "command_type");
@@ -5445,7 +6016,7 @@ public class MvpStoreService {
 
     String eventType = firstString(row, "event_type");
     if (eventType != null && !eventType.isBlank()) {
-      row.putIfAbsent("event_type_name_cn", eventTypeNameCn(eventType));
+      row.put("event_type_name_cn", eventTypeNameCn(eventType));
     }
 
     String routeNo = firstString(row, "route_no");
@@ -5461,13 +6032,13 @@ public class MvpStoreService {
     String sourceSystem = firstString(row, "source");
     String targetSystem = firstString(row, "target");
     if (sourceSystem != null && !sourceSystem.isBlank()) {
-      row.putIfAbsent("source_name_cn", systemNameCn(sourceSystem));
+      row.put("source_name_cn", systemNameCn(sourceSystem));
     }
     if (targetSystem != null && !targetSystem.isBlank()) {
-      row.putIfAbsent("target_name_cn", systemNameCn(targetSystem));
+      row.put("target_name_cn", systemNameCn(targetSystem));
     }
     if (sourceSystem != null && !sourceSystem.isBlank() && targetSystem != null && !targetSystem.isBlank()) {
-      row.putIfAbsent("sync_flow_cn", syncFlowCn(sourceSystem, targetSystem));
+      row.put("sync_flow_cn", syncFlowCn(sourceSystem, targetSystem));
     }
 
     String scenario = firstString(row, "scenario");
@@ -5566,6 +6137,104 @@ public class MvpStoreService {
       case "N" -> 1;
       default -> 9;
     };
+  }
+
+  private static String normalizeWeekendRestMode(String modeText) {
+    if (modeText == null) {
+      return WEEKEND_REST_MODE_DOUBLE;
+    }
+    String normalized = modeText.trim().toUpperCase(Locale.ROOT);
+    return switch (normalized) {
+      case WEEKEND_REST_MODE_NONE -> WEEKEND_REST_MODE_NONE;
+      case WEEKEND_REST_MODE_SINGLE -> WEEKEND_REST_MODE_SINGLE;
+      default -> WEEKEND_REST_MODE_DOUBLE;
+    };
+  }
+
+  private static String normalizeDateShiftMode(String modeText) {
+    if (modeText == null) {
+      return "";
+    }
+    String normalized = modeText.trim().toUpperCase(Locale.ROOT);
+    return switch (normalized) {
+      case DATE_SHIFT_MODE_REST -> DATE_SHIFT_MODE_REST;
+      case DATE_SHIFT_MODE_DAY -> DATE_SHIFT_MODE_DAY;
+      case DATE_SHIFT_MODE_NIGHT -> DATE_SHIFT_MODE_NIGHT;
+      case DATE_SHIFT_MODE_BOTH -> DATE_SHIFT_MODE_BOTH;
+      default -> "";
+    };
+  }
+
+  private static Map<String, String> normalizeDateShiftModeByDate(Object input) {
+    Map<String, String> out = new LinkedHashMap<>();
+    if (!(input instanceof Map<?, ?> rawMap)) {
+      return out;
+    }
+    for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+      String dateText = String.valueOf(entry.getKey() == null ? "" : entry.getKey()).trim();
+      if (dateText.isBlank()) {
+        continue;
+      }
+      try {
+        LocalDate.parse(dateText);
+      } catch (RuntimeException ignored) {
+        continue;
+      }
+      String mode = normalizeDateShiftMode(String.valueOf(entry.getValue() == null ? "" : entry.getValue()));
+      if (mode.isBlank()) {
+        continue;
+      }
+      out.put(dateText, mode);
+    }
+    return out;
+  }
+
+  private static boolean isCnStatutoryHoliday(LocalDate date) {
+    if (date == null) {
+      return false;
+    }
+    return CN_STATUTORY_HOLIDAY_DATE_SET.contains(date.toString());
+  }
+
+  private String resolveDateShiftMode(LocalDate date) {
+    if (date == null) {
+      return DATE_SHIFT_MODE_DAY;
+    }
+    String manualMode = state.dateShiftModeByDate == null ? "" : normalizeDateShiftMode(state.dateShiftModeByDate.get(date.toString()));
+    if (!manualMode.isBlank()) {
+      return manualMode;
+    }
+    if (!state.skipStatutoryHolidays) {
+      return DATE_SHIFT_MODE_DAY;
+    }
+    if (isCnStatutoryHoliday(date)) {
+      return DATE_SHIFT_MODE_REST;
+    }
+
+    String weekendRestMode = normalizeWeekendRestMode(state.weekendRestMode);
+    int weekday = date.getDayOfWeek().getValue();
+    if (WEEKEND_REST_MODE_NONE.equals(weekendRestMode)) {
+      return DATE_SHIFT_MODE_DAY;
+    }
+    if (WEEKEND_REST_MODE_SINGLE.equals(weekendRestMode)) {
+      return weekday == 7 ? DATE_SHIFT_MODE_REST : DATE_SHIFT_MODE_DAY;
+    }
+    return (weekday == 6 || weekday == 7) ? DATE_SHIFT_MODE_REST : DATE_SHIFT_MODE_DAY;
+  }
+
+  private static boolean isShiftOpenInDateMode(String shiftCode, String modeText) {
+    String normalizedShiftCode = normalizeShiftCode(shiftCode);
+    String mode = normalizeDateShiftMode(modeText);
+    if (DATE_SHIFT_MODE_REST.equals(mode)) {
+      return false;
+    }
+    if (DATE_SHIFT_MODE_NIGHT.equals(mode)) {
+      return "N".equals(normalizedShiftCode);
+    }
+    if (DATE_SHIFT_MODE_BOTH.equals(mode)) {
+      return "D".equals(normalizedShiftCode) || "N".equals(normalizedShiftCode);
+    }
+    return "D".equals(normalizedShiftCode);
   }
 
   private static String dependencyNameCn(String dependencyType) {
@@ -5714,13 +6383,13 @@ public class MvpStoreService {
   private static String routeNameCn(String routeNo) {
     if (routeNo != null && routeNo.startsWith("ROUTE-")) {
       String productCode = routeNo.substring("ROUTE-".length());
-      return productNameCn(productCode) + "工艺路线";
+      return productNameCn(productCode) + "\u5de5\u827a\u8def\u7ebf";
     }
     return routeNo == null ? "" : routeNo;
   }
 
   private static String syncFlowCn(String source, String target) {
-    return systemNameCn(source) + "写入，" + systemNameCn(target) + "读取";
+    return systemNameCn(source) + "\u5199\u5165\uff0c" + systemNameCn(target) + "\u8bfb\u53d6";
   }
 
   private Map<String, Object> runIdempotent(String requestId, String action, Supplier<Map<String, Object>> executor) {
@@ -5898,19 +6567,19 @@ public class MvpStoreService {
   private static String scheduleReasonNameCn(String reasonCode) {
     String normalized = normalizeCode(reasonCode);
     return switch (normalized) {
-      case "CAPACITY_MANPOWER" -> "当前班次人力不足，无法继续排产";
-      case "CAPACITY_MACHINE" -> "当前班次设备不足，无法继续排产";
-      case "MATERIAL_SHORTAGE" -> "当前班次物料不足，无法继续排产";
-      case "COMPONENT_SHORTAGE" -> "BOM组件未齐套或未到料，当前班次无法排产";
-      case "TRANSFER_CONSTRAINT" -> "受最小转运批量、批间等待或最小批次限制，当前班次暂不可排";
-      case "BEFORE_EXPECTED_START" -> "未到订单预计开始时间，当前班次暂不排产";
-      case "DEPENDENCY_BLOCKED", "DEPENDENCY_LIMIT" -> "受前序工序约束，后序暂时不可继续排产";
-      case "FROZEN_BY_POLICY" -> "订单处于冻结策略中，不参与本轮排产";
-      case "LOCKED_PRESERVED" -> "锁单按基线保留，本轮不重排该部分任务";
-      case "URGENT_GUARANTEE" -> "加急订单触发保底资源或最低日产出保护";
-      case "LOCK_PREEMPTED_BY_URGENT" -> "为保障加急订单，锁单资源被部分让位";
-      case "CAPACITY_LIMIT", "CAPACITY_UNKNOWN" -> "当前班次可用产能不足（人力/设备/物料受限）";
-      case "UNKNOWN", "" -> "未标记原因";
+      case "CAPACITY_MANPOWER" -> "瑜版挸澧犻悵顓燁偧娴滃搫濮忔稉宥堝喕閿涘本妫ゅ▔鏇犳埛缂侇厽甯撴禍";
+      case "CAPACITY_MACHINE" -> "瑜版挸澧犻悵顓燁偧鐠佹儳顦稉宥堝喕閿涘本妫ゅ▔鏇犳埛缂侇厽甯撴禍";
+      case "MATERIAL_SHORTAGE" -> "瑜版挸澧犻悵顓燁偧閻椻晜鏋℃稉宥堝喕閿涘本妫ゅ▔鏇犳埛缂侇厽甯撴禍";
+      case "COMPONENT_SHORTAGE" -> "BOM缂佸嫪娆㈤張顏堢秷婵傛鍨ㄩ張顏勫煂閺傛瑱绱濊ぐ鎾冲閻濐厽顐奸弮鐘崇《閹烘帊楠";
+      case "TRANSFER_CONSTRAINT" -> "閸欐娓剁亸蹇氭祮鏉╂劖澹掗柌蹇嬧偓浣瑰闂傚鐡戝鍛灗閺堚偓鐏忓繑澹掑▎锟犳閸掕绱濊ぐ鎾冲閻濐厽顐奸弳鍌欑瑝閸欘垱甯";
+      case "BEFORE_EXPECTED_START" -> "閺堫亜鍩岀拋銏犲礋妫板嫯顓稿鈧慨瀣闂傝揪绱濊ぐ鎾冲閻濐厽顐奸弳鍌欑瑝閹烘帊楠";
+      case "DEPENDENCY_BLOCKED", "DEPENDENCY_LIMIT" -> "閸欐澧犳惔蹇撲紣鎼村繒瀹抽弶鐕傜礉閸氬骸绨弳鍌涙娑撳秴褰茬紒褏鐢婚幒鎺嶉獓";
+      case "FROZEN_BY_POLICY" -> "鐠併垹宕熸径鍕艾閸愯崵绮ㄧ粵鏍殣娑擃叏绱濇稉宥呭棘娑撳孩婀版潪顔藉笓娴";
+      case "LOCKED_PRESERVED" -> "闁夸礁宕熼幐澶婄唨缁惧じ绻氶悾娆欑礉閺堫剝鐤嗘稉宥夊櫢閹烘帟顕氶柈銊ュ瀻娴犺濮";
+      case "URGENT_GUARANTEE" -> "閸旂姵鈧儴顓归崡鏇⌒曢崣鎴滅箽鎼存洝绁┃鎰灗閺堚偓娴ｅ孩妫╂禍褍鍤穱婵囧Б";
+      case "LOCK_PREEMPTED_BY_URGENT" -> "娑撹桨绻氶梾婊冨閹儴顓归崡鏇礉闁夸礁宕熺挧鍕爱鐞氼偊鍎撮崚鍡氼唨娴";
+      case "CAPACITY_LIMIT", "CAPACITY_UNKNOWN" -> "瑜版挸澧犻悵顓燁偧閸欘垳鏁ゆ禍褑鍏樻稉宥堝喕閿涘牅姹夐崝?鐠佹儳顦?閻椻晜鏋￠崣妤呮閿";
+      case "UNKNOWN", "" -> "閺堫亝鐖ｇ拋鏉垮斧閸";
       default -> normalized;
     };
   }
@@ -6102,24 +6771,24 @@ public class MvpStoreService {
   ) {
     String processName = processNameCn(processCode);
     if (targetQty <= 1e-9) {
-      return processName + "在本次排产中没有待分配目标量。";
+      return processName + "閸︺劍婀板▎鈩冨笓娴溠傝厬濞屸剝婀佸鍛瀻闁板秶娲伴弽鍥櫤閵";
     }
 
     double scheduleRate = Math.max(0d, Math.min(100d, (scheduledQty / targetQty) * 100d));
     if (unscheduledQty <= 1e-9) {
       return processName +
-      "目标量" + formatQtyText(targetQty) +
-      "，已分配" + formatQtyText(scheduledQty) +
-      "（" + formatPercentText(scheduleRate) +
-      "），涉及" + orderCount + "个订单，当前约束下已全部覆盖。";
+      "閻╊喗鐖ｉ柌" + formatQtyText(targetQty) +
+      "閿涘苯鍑￠崚鍡涘帳" + formatQtyText(scheduledQty) +
+      "閿" + formatPercentText(scheduleRate) +
+      "閿涘绱濆☉澶婂挤" + orderCount + "娑擃亣顓归崡鏇礉瑜版挸澧犵痪锔芥将娑撳鍑￠崗銊╁劥鐟曞棛娲婇妴";
     }
 
     return processName +
-    "目标量" + formatQtyText(targetQty) +
-    "，已分配" + formatQtyText(scheduledQty) +
-    "（" + formatPercentText(scheduleRate) +
-    "），仍有" + formatQtyText(unscheduledQty) +
-    "未排，主要受“" + scheduleReasonNameCn(topReasonCode) + "”影响。";
+    "閻╊喗鐖ｉ柌" + formatQtyText(targetQty) +
+    "閿涘苯鍑￠崚鍡涘帳" + formatQtyText(scheduledQty) +
+    "閿" + formatPercentText(scheduleRate) +
+    "閿涘绱濇禒宥嗘箒" + formatQtyText(unscheduledQty) +
+    "閺堫亝甯撻敍灞煎瘜鐟曚礁褰堥垾" + scheduleReasonNameCn(topReasonCode) + "閳ユ繂濂栭崫宥冣偓";
   }
 
   private static String formatQtyText(double value) {
@@ -6181,7 +6850,7 @@ public class MvpStoreService {
     double materialAvailable
   ) {
     if (maxAllocation == null) {
-      return processNameCn(processCode) + "暂无可解释的峰值分配记录。";
+      return processNameCn(processCode) + "閺嗗倹妫ら崣顖澬掗柌濠勬畱瀹勬澘鈧厧鍨庨柊宥堫唶瑜版洏鈧";
     }
 
     double peakQty = round2(maxAllocation.scheduledQty);
@@ -6193,28 +6862,28 @@ public class MvpStoreService {
     String dominant = "";
     if (remaining > 1e-9 && remaining < minCap) {
       minCap = remaining;
-      dominant = "任务在该班次前的剩余可排量";
+      dominant = "娴犺濮熼崷銊嚉閻濐厽顐奸崜宥囨畱閸撯晙缍戦崣顖涘笓闁";
     }
     if (resourceCap > 1e-9 && resourceCap < minCap) {
       minCap = resourceCap;
-      dominant = "该班次的人力/设备资源能力上限";
+      dominant = "鐠囥儳褰▎锛勬畱娴滃搫濮?鐠佹儳顦挧鍕爱閼宠棄濮忔稉濠囨";
     }
     if (materialCap > 1e-9 && materialCap < minCap) {
       minCap = materialCap;
-      dominant = "该班次可用物料上限";
+      dominant = "鐠囥儳褰▎鈥冲讲閻劎澧块弬娆庣瑐闂";
     }
     if (dominant.isBlank()) {
-      dominant = "交期优先级、前序放行量与资源约束的综合平衡";
+      dominant = "娴溿倖婀℃导妯哄帥缁狙佲偓浣稿鎼村繑鏂佺悰宀勫櫤娑撳氦绁┃鎰閺夌喓娈戠紒鐓庢値楠炲疇銆€";
     }
 
     return processNameCn(processCode) +
-    "在" + maxAllocation.date + shiftNameCn(maxAllocation.shiftCode) +
-    "对订单" + maxAllocation.orderNo +
-    "产生单次峰值分配" + formatQtyText(peakQty) +
-    "。当班任务剩余可排量约" + formatQtyText(remaining) +
-    "，资源可支撑上限约" + formatQtyText(resourceCap) +
-    "，物料可用量约" + formatQtyText(materialCap) +
-    "；算法按可行上限取最小值进行分配，因此本次峰值受“" + dominant + "”主导。";
+    "閸" + maxAllocation.date + shiftNameCn(maxAllocation.shiftCode) +
+    "鐎电顓归崡" + maxAllocation.orderNo +
+    "娴溠呮晸閸楁洘顐煎畡鏉库偓鐓庡瀻闁" + formatQtyText(peakQty) +
+    "閵嗗倸缍嬮悵顓濇崲閸斺€冲⒖娴ｆ瑥褰查幒鎺楀櫤缁" + formatQtyText(remaining) +
+    "閿涘矁绁┃鎰讲閺€顖涙嫼娑撳﹪妾虹痪" + formatQtyText(resourceCap) +
+    "閿涘瞼澧块弬娆忓讲閻劑鍣虹痪" + formatQtyText(materialCap) +
+    "閿涙稓鐣诲▔鏇熷瘻閸欘垵顢戞稉濠囨閸欐牗娓剁亸蹇撯偓鑹扮箻鐞涘苯鍨庨柊宥忕礉閸ョ姵顒濋張顒侇偧瀹勬澘鈧厧褰堥垾" + dominant + "閳ユ繀瀵岀€电鈧";
   }
 
   private int generateDailySalesAndProductionOrders(LocalDate businessDate, int dailySales, Random random, String requestId) {
@@ -6259,14 +6928,14 @@ public class MvpStoreService {
       appendSimulationEvent(
         businessDate,
         "SALES_RECEIVED",
-        "接收到随机销售订单。",
+        "\u63a5\u6536\u5230\u968f\u673a\u9500\u552e\u8ba2\u5355\u3002",
         requestId,
         Map.of("sales_order_no", salesOrderNo, "product_code", productCode, "order_qty", qty)
       );
       appendSimulationEvent(
         businessDate,
         "ORDER_CONVERTED",
-        "销售订单已转换为生产订单。",
+        "\u9500\u552e\u8ba2\u5355\u5df2\u8f6c\u6362\u4e3a\u751f\u4ea7\u8ba2\u5355\u3002",
         requestId,
         Map.of("sales_order_no", salesOrderNo, "production_order_no", productionOrderNo)
       );
@@ -6341,7 +7010,7 @@ public class MvpStoreService {
     appendSimulationEvent(
       startDate,
       "CAPACITY_CHANGED",
-      "已应用产能场景。",
+      "\u5df2\u5e94\u7528\u4ea7\u80fd\u573a\u666f\u3002",
       requestId,
       Map.of(
         "scenario", scenario,
@@ -6457,7 +7126,7 @@ public class MvpStoreService {
     appendSimulationEvent(
       businessDate,
       "EXECUTION_PROGRESS",
-      "已根据仿真执行结果自动生成报工。",
+      "\u5df2\u6839\u636e\u4eff\u771f\u6267\u884c\u7ed3\u679c\u81ea\u52a8\u751f\u6210\u62a5\u5de5\u3002",
       requestIdPrefix,
       Map.of("reporting_count", reportingCount, "version_no", versionNo)
     );
@@ -6541,6 +7210,21 @@ public class MvpStoreService {
     return count;
   }
 
+  private static boolean hasRemainingQty(MvpDomain.Order order) {
+    if (order == null || order.items == null || order.items.isEmpty()) {
+      return false;
+    }
+    for (MvpDomain.OrderItem item : order.items) {
+      if (item == null) {
+        continue;
+      }
+      if (item.qty - item.completedQty > 1e-9) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static boolean isOrderDone(MvpDomain.Order order) {
     for (MvpDomain.OrderItem item : order.items) {
       if (item.completedQty + 1e-9 < item.qty) {
@@ -6583,6 +7267,8 @@ public class MvpStoreService {
     salesSeq.set(manualSimulationSnapshot.salesSeq);
     productionSeq.set(manualSimulationSnapshot.productionSeq);
     simulationEventSeq.set(manualSimulationSnapshot.simulationEventSeq);
+    finalCompletedByOrderProductCache.clear();
+    finalCompletedSyncCursor = 0;
     manualSimulationSnapshot = null;
   }
 
@@ -6592,6 +7278,11 @@ public class MvpStoreService {
     target.horizonDays = source.horizonDays;
     target.shiftsPerDay = source.shiftsPerDay;
     target.shiftHours = source.shiftHours;
+    target.skipStatutoryHolidays = source.skipStatutoryHolidays;
+    target.weekendRestMode = normalizeWeekendRestMode(source.weekendRestMode);
+    target.dateShiftModeByDate = source.dateShiftModeByDate == null
+      ? new LinkedHashMap<>()
+      : new LinkedHashMap<>(source.dateShiftModeByDate);
     target.strictRoute = source.strictRoute;
 
     target.processes = new ArrayList<>(source.processes.stream()
@@ -6854,6 +7545,57 @@ public class MvpStoreService {
     return value == null ? "" : value.trim().toUpperCase();
   }
 
+  private static String normalizeMaterialCode(String value) {
+    return normalizeCode(value);
+  }
+
+  private static List<Map<String, Object>> freezeMaterialRows(List<Map<String, Object>> rows) {
+    if (rows == null || rows.isEmpty()) {
+      return List.of();
+    }
+    List<Map<String, Object>> frozen = new ArrayList<>(rows.size());
+    for (Map<String, Object> row : rows) {
+      if (row == null) {
+        continue;
+      }
+      frozen.add(new LinkedHashMap<>(row));
+    }
+    return frozen;
+  }
+
+  private static List<Map<String, Object>> copyMaterialRows(List<Map<String, Object>> rows) {
+    if (rows == null || rows.isEmpty()) {
+      return List.of();
+    }
+    List<Map<String, Object>> copied = new ArrayList<>(rows.size());
+    for (Map<String, Object> row : rows) {
+      copied.add(new LinkedHashMap<>(row));
+    }
+    return copied;
+  }
+
+  private static String materialListBaseCode(String materialListNo) {
+    String normalized = normalizeMaterialCode(materialListNo);
+    if (normalized.isBlank()) {
+      return "";
+    }
+    int splitIndex = normalized.indexOf('_');
+    if (splitIndex <= 0) {
+      splitIndex = normalized.indexOf("-V");
+    }
+    if (splitIndex <= 0) {
+      return normalized;
+    }
+    return normalized.substring(0, splitIndex);
+  }
+
+  private static boolean isSameMaterialCode(String left, String right) {
+    if (left == null || right == null) {
+      return false;
+    }
+    return normalizeMaterialCode(left).equals(normalizeMaterialCode(right));
+  }
+
   private static String orderProcessKey(String orderNo, String processCode) {
     return (orderNo == null ? "" : orderNo.trim()) + "#" + normalizeCode(processCode);
   }
@@ -6884,6 +7626,16 @@ public class MvpStoreService {
 
   private static long elapsedMillis(long startNanos) {
     return Math.max(0L, (System.nanoTime() - startNanos) / 1_000_000L);
+  }
+
+  private static final class CachedOrderPoolMaterials {
+    List<Map<String, Object>> rows;
+    String refreshedAt;
+
+    CachedOrderPoolMaterials(List<Map<String, Object>> rows, String refreshedAt) {
+      this.rows = rows == null ? List.of() : rows;
+      this.refreshedAt = refreshedAt;
+    }
   }
 
   private static final class ReportVersionBinding {
@@ -6996,3 +7748,7 @@ public class MvpStoreService {
     return objectMapper.convertValue(raw, new TypeReference<List<Map<String, Object>>>() {});
   }
 }
+
+
+
+
