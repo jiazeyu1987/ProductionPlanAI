@@ -5,7 +5,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import LiteSchedulerPage from "./LiteSchedulerPage";
 
 describe("LiteSchedulerPage", () => {
@@ -157,19 +157,43 @@ describe("LiteSchedulerPage", () => {
     fireEvent.change(screen.getByTestId("order-no-input"), {
       target: { value: "EDIT-ME" },
     });
+    fireEvent.change(screen.getByTestId("order-product-name-input"), {
+      target: { value: "Prod-A" },
+    });
+    fireEvent.change(screen.getByTestId("order-spec-input"), {
+      target: { value: "Spec-A" },
+    });
+    fireEvent.change(screen.getByTestId("order-batch-no-input"), {
+      target: { value: "Batch-A" },
+    });
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
       target: { value: "2" },
     });
     fireEvent.click(screen.getByTestId("submit-order-modal"));
+    expect(screen.getByText("Prod-A", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Spec-A", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Batch-A", { selector: "td" })).toBeInTheDocument();
 
     const oldRow = screen
       .getByText("EDIT-ME", { selector: "td" })
       .closest("tr");
     expect(oldRow).not.toBeNull();
     fireEvent.click(within(oldRow).getByRole("button", { name: "编辑" }));
+    expect(screen.getByTestId("order-product-name-input")).toHaveValue("Prod-A");
+    expect(screen.getByTestId("order-spec-input")).toHaveValue("Spec-A");
+    expect(screen.getByTestId("order-batch-no-input")).toHaveValue("Batch-A");
 
     fireEvent.change(screen.getByTestId("order-no-input"), {
       target: { value: "EDITED-ORDER" },
+    });
+    fireEvent.change(screen.getByTestId("order-product-name-input"), {
+      target: { value: "Prod-B" },
+    });
+    fireEvent.change(screen.getByTestId("order-spec-input"), {
+      target: { value: "Spec-B" },
+    });
+    fireEvent.change(screen.getByTestId("order-batch-no-input"), {
+      target: { value: "Batch-B" },
     });
     fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
       target: { value: "1.5" },
@@ -180,6 +204,12 @@ describe("LiteSchedulerPage", () => {
       screen.getByText("EDITED-ORDER", { selector: "td" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("EDIT-ME", { selector: "td" })).toBeNull();
+    expect(screen.getByText("Prod-B", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Spec-B", { selector: "td" })).toBeInTheDocument();
+    expect(screen.getByText("Batch-B", { selector: "td" })).toBeInTheDocument();
+    expect(screen.queryByText("Prod-A", { selector: "td" })).toBeNull();
+    expect(screen.queryByText("Spec-A", { selector: "td" })).toBeNull();
+    expect(screen.queryByText("Batch-A", { selector: "td" })).toBeNull();
 
     const editedRow = screen
       .getByText("EDITED-ORDER", { selector: "td" })
@@ -261,6 +291,192 @@ describe("LiteSchedulerPage", () => {
     expect(matches.some((node) => node.closest(".lite-cal-line-orders"))).toBe(
       true,
     );
+  });
+
+  it("uses max planned days across lines in duration mode order table", () => {
+    window.localStorage.setItem(
+      "liteScheduler.scenario.v1",
+      JSON.stringify({
+        schemaVersion: 1,
+        nextOrderSeq: 1,
+        planningMode: "DURATION_MANUAL_FINISH",
+        horizonStart: "2026-03-27",
+        horizonDays: 30,
+        skipStatutoryHolidays: false,
+        weekendRestMode: "DOUBLE",
+        dateWorkModeByDate: {},
+        manualFinishByLineOrder: {},
+        lines: [
+          {
+            id: "L1",
+            name: "导管产线",
+            baseCapacity: 300,
+            capacityOverrides: {},
+            enabled: true,
+          },
+          {
+            id: "L2",
+            name: "导丝产线",
+            baseCapacity: 300,
+            capacityOverrides: {},
+            enabled: true,
+          },
+        ],
+        orders: [],
+        locks: [],
+        simulationLogs: [],
+      }),
+    );
+    render(<LiteSchedulerPage />);
+
+    fireEvent.click(screen.getByTestId("open-order-modal"));
+    fireEvent.change(screen.getByTestId("order-no-input"), {
+      target: { value: "MAX-001" },
+    });
+    const inputs = screen.getAllByTestId(/^order-line-plan-days-/);
+    fireEvent.change(inputs[0], {
+      target: { value: "7" },
+    });
+    fireEvent.change(inputs[1], {
+      target: { value: "6" },
+    });
+    fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+    const row = screen.getByText("MAX-001", { selector: "td" }).closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row).getByText("7.0")).toBeInTheDocument();
+    expect(within(row).queryByText("13.0")).toBeNull();
+  });
+
+  it("assigns different colors for adjacent orders in calendar", () => {
+    render(<LiteSchedulerPage />);
+
+    fireEvent.change(screen.getByTestId("horizon-start-input"), {
+      target: { value: "2026-03-27" },
+    });
+    fireEvent.click(screen.getByTestId("planning-mode-duration"));
+
+    fireEvent.click(screen.getByTestId("open-order-modal"));
+    fireEvent.change(screen.getByTestId("order-no-input"), {
+      target: { value: "CLR-001" },
+    });
+    fireEvent.change(screen.getAllByTestId(/^order-line-plan-days-/)[0], {
+      target: { value: "1" },
+    });
+    fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+    fireEvent.click(screen.getByTestId("open-order-modal"));
+    fireEvent.change(screen.getByTestId("order-no-input"), {
+      target: { value: "CLR-002" },
+    });
+    fireEvent.change(screen.getAllByTestId(/^order-line-plan-days-/)[0], {
+      target: { value: "1" },
+    });
+    fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+    fireEvent.click(screen.getByTestId("lite-tab-schedule"));
+    fireEvent.change(screen.getByTestId("calendar-month-input"), {
+      target: { value: "2026-03" },
+    });
+
+    const firstBtn = screen.getByRole("button", { name: /CLR-001/ });
+    const secondBtn = screen.getByRole("button", { name: /CLR-002/ });
+    const firstColorClass = [...firstBtn.classList].find((cls) =>
+      cls.startsWith("lite-cal-task-border-"),
+    );
+    const secondColorClass = [...secondBtn.classList].find((cls) =>
+      cls.startsWith("lite-cal-task-border-"),
+    );
+    expect(firstColorClass).toBeTruthy();
+    expect(secondColorClass).toBeTruthy();
+    expect(firstColorClass).not.toBe(secondColorClass);
+  });
+
+  it("exports scheduled orders from calendar to excel", async () => {
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => {});
+    try {
+      render(<LiteSchedulerPage />);
+
+      fireEvent.click(screen.getByTestId("open-order-modal"));
+      fireEvent.change(screen.getByTestId("order-no-input"), {
+        target: { value: "EXP-001" },
+      });
+      fireEvent.change(screen.getAllByTestId(/^order-line-days-/)[0], {
+        target: { value: "1" },
+      });
+      fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+      fireEvent.click(screen.getByTestId("lite-tab-schedule"));
+      fireEvent.click(screen.getByTestId("calendar-export-excel-btn"));
+
+      expect(await screen.findByText(/已导出排产订单：/)).toBeInTheDocument();
+    } finally {
+      clickSpy.mockRestore();
+    }
+  });
+
+  it("supports duration mode and manual finish backfill from calendar", async () => {
+    render(<LiteSchedulerPage />);
+
+    fireEvent.change(screen.getByTestId("horizon-start-input"), {
+      target: { value: "2026-03-27" },
+    });
+    fireEvent.click(screen.getByTestId("planning-mode-duration"));
+
+    fireEvent.click(screen.getByTestId("open-order-modal"));
+    fireEvent.change(screen.getByTestId("order-no-input"), {
+      target: { value: "DUR-001" },
+    });
+    fireEvent.change(screen.getAllByTestId(/^order-line-plan-days-/)[0], {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+    fireEvent.click(screen.getByTestId("open-order-modal"));
+    fireEvent.change(screen.getByTestId("order-no-input"), {
+      target: { value: "DUR-002" },
+    });
+    fireEvent.change(screen.getAllByTestId(/^order-line-plan-days-/)[0], {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByTestId("submit-order-modal"));
+
+    fireEvent.change(screen.getByTestId("horizon-start-input"), {
+      target: { value: "2026-03-29" },
+    });
+    fireEvent.click(screen.getByTestId("lite-tab-schedule"));
+    fireEvent.change(screen.getByTestId("calendar-month-input"), {
+      target: { value: "2026-03" },
+    });
+
+    const day29Before = screen.getByTestId("calendar-day-2026-03-29");
+    fireEvent.click(within(day29Before).getByRole("button", { name: /DUR-001/ }));
+    expect(screen.getByTestId("finish-modal")).toBeInTheDocument();
+    const finishInput = screen.getByTestId("finish-date-input");
+    const savedFinishDate = finishInput.value;
+    fireEvent.change(finishInput, {
+      target: { value: savedFinishDate },
+    });
+    fireEvent.click(screen.getByTestId("submit-finish-btn"));
+
+    expect(
+      await screen.findByText(
+        new RegExp(`已结束，实际结束时间：${savedFinishDate}`),
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("lite-tab-orders"));
+    expect(screen.queryByText("已排天数(天)")).toBeNull();
+    expect(screen.queryByText("剩余天数(天)")).toBeNull();
+    expect(screen.queryByText(/还需天数/)).toBeNull();
+    expect(screen.getByText("结束状态")).toBeInTheDocument();
+    expect(screen.getByText("实际结束时间")).toBeInTheDocument();
+    expect(screen.getByText("已结束", { selector: "td" })).toBeInTheDocument();
+    expect(
+      screen.getByText(savedFinishDate, { selector: "td" }),
+    ).toBeInTheDocument();
   });
 
   it("supports one-click replan from today", () => {
