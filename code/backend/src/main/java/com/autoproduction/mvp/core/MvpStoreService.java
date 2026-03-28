@@ -21,6 +21,11 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
@@ -41,6 +46,17 @@ import org.springframework.stereotype.Service;
 public class MvpStoreService {
   private static final long DEFAULT_SIM_SEED = 20260322L;
   private static final int DEFAULT_SIM_DAILY_SALES = 20;
+  private static final int ORDER_MATERIAL_AVAILABILITY_MAX_ORDERS = 12;
+  private static final long ORDER_MATERIAL_AVAILABILITY_BUDGET_MS = 90_000L;
+  private static final long ORDER_MATERIAL_AVAILABILITY_REFRESH_BUDGET_MS = 120_000L;
+  private static final int ORDER_MATERIAL_INVENTORY_PARALLEL_CHUNK_SIZE = 40;
+  private static final int ORDER_MATERIAL_INVENTORY_PARALLEL_THREADS = 6;
+  private static final Set<String> ORDER_MATERIAL_PRIORITY_ORDER_NOS = Set.of(
+    "881MO091041",
+    "881MO090957",
+    "881MO090955",
+    "881MO090954"
+  );
   private static final String DEFAULT_SIM_SCENARIO = "STABLE";
   private static final ZoneId SIMULATION_ZONE = ZoneId.of("Asia/Shanghai");
   private static final String STRATEGY_KEY_ORDER_FIRST = "KEY_ORDER_FIRST";
@@ -66,6 +82,26 @@ public class MvpStoreService {
     "PROC_BALLOON", 2,
     "PROC_STENT", 2,
     "PROC_STERILE", 2
+  );
+  private static final Set<String> DEPRECATED_MASTERDATA_CONFIG_FIELDS = Set.of(
+    "horizon_start_date",
+    "horizonStartDate",
+    "horizon_days",
+    "horizonDays",
+    "shifts_per_day",
+    "shiftsPerDay",
+    "shift_hours",
+    "shiftHours",
+    "skip_statutory_holidays",
+    "skipStatutoryHolidays",
+    "weekend_rest_mode",
+    "weekendRestMode",
+    "date_shift_mode_by_date",
+    "dateShiftModeByDate",
+    "section_leader_bindings",
+    "sectionLeaderBindings",
+    "resource_pool",
+    "resourcePool"
   );
   private static final Map<String, String> PRODUCT_NAME_CN = Map.ofEntries(
     Map.entry("PROD_CATH", "导管"),
@@ -193,6 +229,7 @@ public class MvpStoreService {
   private static final String DATE_SHIFT_MODE_DAY = "DAY";
   private static final String DATE_SHIFT_MODE_NIGHT = "NIGHT";
   private static final String DATE_SHIFT_MODE_BOTH = "BOTH";
+  private static final String DEFAULT_COMPANY_CODE = "COMPANY-MAIN";
   private static final Set<String> CN_STATUTORY_HOLIDAY_DATE_SET = Set.of(
     "2024-01-01",
     "2024-02-10",
@@ -492,6 +529,8 @@ public class MvpStoreService {
         if (cached != null) {
           return copyMaterialRows(cached.rows);
         }
+        // Non-refresh reads are cache-only to avoid blocking pages on remote ERP latency.
+        return List.of();
       }
 
       Map<String, Object> orderRow = erpDataManager.getProductionOrders().stream()
@@ -582,6 +621,8 @@ public class MvpStoreService {
         if (cached != null) {
           return copyMaterialRows(cached.rows);
         }
+        // Non-refresh reads are cache-only to avoid blocking pages on remote ERP latency.
+        return List.of();
       }
 
       List<Map<String, Object>> rawRows = erpDataManager.getProductionMaterialIssuesByOrder(
@@ -625,6 +666,463 @@ public class MvpStoreService {
       );
       return copyMaterialRows(cachedRows);
     }
+  }
+
+  public List<Map<String, Object>> listOrderMaterialAvailability(boolean refreshFromErp) {
+    synchronized (lock) {
+      return deepCopyList(buildOrderMaterialAvailabilityUnionRows(refreshFromErp));
+    }
+  }
+
+  private List<Map<String, Object>> buildOrderMaterialAvailabilityUnionRows(boolean refreshFromErp) {
+    List<Map<String, Object>> detailRows = buildOrderMaterialAvailabilityRowsFromOrderPool(refreshFromErp);
+    Map<String, MaterialUnionAggregate> aggregateByCode = new LinkedHashMap<>();
+    for (Map<String, Object> row : detailRows) {
+      String materialCode = normalizeMaterialCode(string(row, "child_material_code", null));
+      if (materialCode == null || materialCode.isBlank()) {
+        continue;
+      }
+      MaterialUnionAggregate aggregate = aggregateByCode.computeIfAbsent(materialCode, ignored -> {
+        MaterialUnionAggregate item = new MaterialUnionAggregate();
+        item.materialCode = materialCode;
+        return item;
+      });
+      String materialName = string(row, "child_material_name_cn", "");
+      if (aggregate.materialNameCn == null || aggregate.materialNameCn.isBlank()) {
+        aggregate.materialNameCn = materialName;
+      }
+      aggregate.demandQty += Math.max(0d, number(row, "demand_qty", 0d));
+      double stockQty = Math.max(0d, number(row, "stock_qty", 0d));
+      if (!aggregate.stockAssigned) {
+        aggregate.stockQty = stockQty;
+        aggregate.stockAssigned = true;
+      } else {
+        aggregate.stockQty = Math.max(aggregate.stockQty, stockQty);
+      }
+      int inventoryMissingFlag = (int) Math.round(number(row, "inventory_missing_flag", 0d));
+      if (inventoryMissingFlag == 1) {
+        aggregate.inventoryMissing = true;
+      }
+      String orderNo = string(row, "order_no", null);
+      if (orderNo != null && !orderNo.isBlank()) {
+        aggregate.orderNos.add(orderNo);
+      }
+    }
+
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (MaterialUnionAggregate aggregate : aggregateByCode.values()) {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("child_material_code", aggregate.materialCode);
+      row.put("child_material_name_cn", aggregate.materialNameCn == null ? "" : aggregate.materialNameCn);
+      row.put("related_order_count", aggregate.orderNos.size());
+      row.put("related_order_nos", String.join("、", aggregate.orderNos));
+      row.put("demand_qty", round3(Math.max(0d, aggregate.demandQty)));
+      row.put("stock_qty", round3(Math.max(0d, aggregate.stockQty)));
+      row.put("shortage_qty", round3(Math.max(0d, aggregate.demandQty - aggregate.stockQty)));
+      row.put("data_status", aggregate.inventoryMissing ? "MISSING_STOCK" : "OK");
+      rows.add(localizeRow(row));
+    }
+    rows.sort(Comparator.comparing(item -> string(item, "child_material_code", "")));
+    return rows;
+  }
+
+  private List<Map<String, Object>> buildOrderMaterialAvailabilityRowsFromOrderPool(boolean refreshFromErp) {
+    List<Map<String, Object>> orderPoolRows = listOrderPool(Map.of());
+    List<Map<String, Object>> forcedRows = new ArrayList<>();
+    List<Map<String, Object>> prioritizedRows = new ArrayList<>();
+    List<Map<String, Object>> fallbackRows = new ArrayList<>();
+    for (Map<String, Object> row : orderPoolRows) {
+      String orderNo = string(row, "order_no", null);
+      if (orderNo == null || orderNo.isBlank() || !looksLikeErpProductionOrderNo(orderNo)) {
+        continue;
+      }
+      String normalizedOrderNo = normalizeCode(orderNo);
+      if (normalizedOrderNo != null && ORDER_MATERIAL_PRIORITY_ORDER_NOS.contains(normalizedOrderNo)) {
+        forcedRows.add(row);
+        continue;
+      }
+      String materialListNo = string(row, "material_list_no", "");
+      if (materialListNo != null && materialListNo.toUpperCase(Locale.ROOT).startsWith("BOM-")) {
+        fallbackRows.add(row);
+      } else {
+        prioritizedRows.add(row);
+      }
+    }
+    List<Map<String, Object>> orderedRows = new ArrayList<>(forcedRows);
+    orderedRows.addAll(prioritizedRows);
+    orderedRows.addAll(fallbackRows);
+
+    List<OrderMaterialWorkRow> workRows = new ArrayList<>();
+    Set<String> allMaterialCodes = new HashSet<>();
+    Set<String> seenOrderNos = new HashSet<>();
+    long startedNanos = System.nanoTime();
+    long budgetMs = refreshFromErp
+      ? ORDER_MATERIAL_AVAILABILITY_REFRESH_BUDGET_MS
+      : ORDER_MATERIAL_AVAILABILITY_BUDGET_MS;
+
+    for (Map<String, Object> orderRow : orderedRows) {
+      if (elapsedMillis(startedNanos) >= budgetMs) {
+        break;
+      }
+      String orderNo = string(orderRow, "order_no", null);
+      if (orderNo == null || orderNo.isBlank() || !seenOrderNos.add(orderNo)) {
+        continue;
+      }
+      if (!looksLikeErpProductionOrderNo(orderNo)) {
+        continue;
+      }
+
+      double totalOrderQty = Math.max(0d, number(orderRow, "order_qty", number(orderRow, "plan_qty", 0d)));
+      double completedOrderQty = Math.max(0d, number(orderRow, "completed_qty", 0d));
+      double remainingOrderQty = Math.max(
+        0d,
+        number(orderRow, "remaining_qty", Math.max(0d, totalOrderQty - completedOrderQty))
+      );
+      if (remainingOrderQty <= 1e-9d) {
+        continue;
+      }
+
+      String productCode = normalizeCode(string(orderRow, "product_code", null));
+      String firstProcessCode = resolveFirstProcessCode(productCode);
+      OrderMaterialWorkRow work = new OrderMaterialWorkRow();
+      work.orderNo = orderNo;
+      work.orderStatus = string(orderRow, "status", string(orderRow, "order_status", "OPEN"));
+      work.productCode = productCode;
+      work.productNameCn = string(orderRow, "product_name_cn", productNameCn(productCode));
+      work.firstProcessCode = firstProcessCode;
+      work.firstProcessNameCn = processNameCn(firstProcessCode);
+      work.totalOrderQty = totalOrderQty > 1e-9d ? totalOrderQty : remainingOrderQty;
+      work.remainingOrderQty = remainingOrderQty;
+
+      List<Map<String, Object>> rawRows = listOrderPoolMaterials(orderNo, refreshFromErp);
+      if (rawRows.isEmpty() && productCode != null && !productCode.isBlank()) {
+        rawRows = listMaterialChildrenByParentCode(productCode, refreshFromErp);
+      }
+      Map<String, MaterialDemandRow> demandByCode = new LinkedHashMap<>();
+      for (Map<String, Object> rawRow : rawRows) {
+        String materialCode = normalizeMaterialCode(string(rawRow, "child_material_code", null));
+        if (materialCode == null || materialCode.isBlank()) {
+          continue;
+        }
+        double requiredQty = Math.max(0d, number(rawRow, "required_qty", 0d));
+        MaterialDemandRow demand = demandByCode.computeIfAbsent(materialCode, ignored -> {
+          MaterialDemandRow row = new MaterialDemandRow();
+          row.materialCode = materialCode;
+          row.materialNameCn = string(rawRow, "child_material_name_cn", "");
+          return row;
+        });
+        demand.requiredQty += requiredQty;
+        if (demand.materialNameCn == null || demand.materialNameCn.isBlank()) {
+          demand.materialNameCn = string(rawRow, "child_material_name_cn", "");
+        }
+      }
+
+      double demandScale = work.totalOrderQty > 1e-9d
+        ? Math.max(0d, Math.min(1d, work.remainingOrderQty / work.totalOrderQty))
+        : 1d;
+      for (MaterialDemandRow demand : demandByCode.values()) {
+        demand.demandQty = round3(Math.max(0d, demand.requiredQty * demandScale));
+        work.materialRows.add(demand);
+        allMaterialCodes.add(demand.materialCode);
+      }
+
+      workRows.add(work);
+      if (workRows.size() >= ORDER_MATERIAL_AVAILABILITY_MAX_ORDERS) {
+        break;
+      }
+    }
+
+    return buildOrderMaterialConstraintSnapshotRows(workRows, allMaterialCodes, refreshFromErp).rows;
+  }
+
+  private OrderMaterialConstraintSnapshot buildOrderMaterialConstraintSnapshot(boolean refreshFromErp) {
+    List<OrderMaterialWorkRow> workRows = new ArrayList<>();
+    Set<String> allMaterialCodes = new HashSet<>();
+    for (MvpDomain.Order order : state.orders) {
+      if (!hasRemainingQty(order)) {
+        continue;
+      }
+      String orderNo = order.orderNo == null ? "" : order.orderNo.trim();
+      if (orderNo.isBlank()) {
+        continue;
+      }
+      String productCode = normalizeCode(orderPrimaryProductCode(order));
+      double totalOrderQty = orderTotalQty(order);
+      double remainingOrderQty = orderRemainingQty(order);
+      String firstProcessCode = resolveFirstProcessCode(productCode);
+      OrderMaterialWorkRow work = new OrderMaterialWorkRow();
+      work.orderNo = orderNo;
+      work.orderStatus = string(toOrderPoolItem(order), "status", order.status);
+      work.productCode = productCode;
+      work.productNameCn = productNameCn(productCode);
+      work.firstProcessCode = firstProcessCode;
+      work.firstProcessNameCn = processNameCn(firstProcessCode);
+      work.totalOrderQty = totalOrderQty;
+      work.remainingOrderQty = remainingOrderQty;
+      List<Map<String, Object>> rawRows = List.of();
+      if (looksLikeErpProductionOrderNo(orderNo)) {
+        rawRows = listOrderPoolMaterials(orderNo, refreshFromErp);
+      }
+      if (rawRows.isEmpty() && productCode != null && !productCode.isBlank()) {
+        rawRows = listMaterialChildrenByParentCode(productCode, refreshFromErp);
+      }
+      Map<String, MaterialDemandRow> demandByCode = new LinkedHashMap<>();
+      for (Map<String, Object> rawRow : rawRows) {
+        String materialCode = normalizeMaterialCode(string(rawRow, "child_material_code", null));
+        if (materialCode == null || materialCode.isBlank()) {
+          continue;
+        }
+        double requiredQty = Math.max(0d, number(rawRow, "required_qty", 0d));
+        MaterialDemandRow demand = demandByCode.computeIfAbsent(materialCode, ignored -> {
+          MaterialDemandRow row = new MaterialDemandRow();
+          row.materialCode = materialCode;
+          row.materialNameCn = string(rawRow, "child_material_name_cn", "");
+          return row;
+        });
+        demand.requiredQty += requiredQty;
+        if (demand.materialNameCn == null || demand.materialNameCn.isBlank()) {
+          demand.materialNameCn = string(rawRow, "child_material_name_cn", "");
+        }
+      }
+
+      double demandScale = totalOrderQty > 1e-9d
+        ? Math.max(0d, Math.min(1d, remainingOrderQty / totalOrderQty))
+        : 1d;
+      for (MaterialDemandRow demand : demandByCode.values()) {
+        demand.demandQty = round3(Math.max(0d, demand.requiredQty * demandScale));
+        work.materialRows.add(demand);
+        allMaterialCodes.add(demand.materialCode);
+      }
+      workRows.add(work);
+    }
+
+    return buildOrderMaterialConstraintSnapshotRows(workRows, allMaterialCodes, refreshFromErp);
+  }
+
+  private OrderMaterialConstraintSnapshot buildOrderMaterialConstraintSnapshotRows(
+    List<OrderMaterialWorkRow> workRows,
+    Set<String> allMaterialCodes,
+    boolean refreshFromErp
+  ) {
+    Map<String, Map<String, Object>> inventoryByCode = queryInventoryByMaterialCodesInParallel(
+      new ArrayList<>(allMaterialCodes),
+      refreshFromErp
+    );
+
+    List<Map<String, Object>> rows = new ArrayList<>();
+    Map<String, OrderMaterialConstraint> constraintByOrderNo = new LinkedHashMap<>();
+    for (OrderMaterialWorkRow work : workRows) {
+      if (work.materialRows.isEmpty()) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("order_no", work.orderNo);
+        row.put("order_status", work.orderStatus);
+        row.put("product_code", work.productCode);
+        row.put("product_name_cn", work.productNameCn);
+        row.put("first_process_code", work.firstProcessCode);
+        row.put("first_process_name_cn", work.firstProcessNameCn);
+        row.put("child_material_code", "");
+        row.put("child_material_name_cn", "");
+        row.put("demand_qty", 0d);
+        row.put("stock_qty", 0d);
+        row.put("shortage_qty", 0d);
+        row.put("max_schedulable_qty", 0d);
+        row.put("order_max_schedulable_qty", 0d);
+        row.put("schedulable_flag", 0);
+        row.put("data_status", "MISSING_BOM");
+        rows.add(localizeRow(row));
+
+        OrderMaterialConstraint constraint = new OrderMaterialConstraint();
+        constraint.maxSchedulableQty = 0d;
+        constraint.dataStatus = "MISSING_BOM";
+        constraint.firstProcessCode = work.firstProcessCode;
+        constraintByOrderNo.put(work.orderNo, constraint);
+        continue;
+      }
+
+      boolean missingStock = false;
+      double orderMaxSchedulable = Double.POSITIVE_INFINITY;
+      for (MaterialDemandRow demand : work.materialRows) {
+        Map<String, Object> inventoryRow = inventoryByCode.get(normalizeCode(demand.materialCode));
+        double stockQty = inventoryRow == null ? 0d : Math.max(0d, number(inventoryRow, "stock_qty", 0d));
+        int missingFlag = inventoryRow == null ? 1 : (int) Math.round(number(inventoryRow, "inventory_missing_flag", 0d));
+        if (missingFlag == 1) {
+          missingStock = true;
+        }
+        double demandQty = Math.max(0d, demand.demandQty);
+        double shortageQty = Math.max(0d, demandQty - stockQty);
+        double demandRate = work.remainingOrderQty > 1e-9d ? demandQty / work.remainingOrderQty : 0d;
+        double maxSchedulableQty = demandRate <= 1e-9d ? Double.POSITIVE_INFINITY : stockQty / demandRate;
+        if (maxSchedulableQty < orderMaxSchedulable) {
+          orderMaxSchedulable = maxSchedulableQty;
+        }
+
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("order_no", work.orderNo);
+        row.put("order_status", work.orderStatus);
+        row.put("product_code", work.productCode);
+        row.put("product_name_cn", work.productNameCn);
+        row.put("first_process_code", work.firstProcessCode);
+        row.put("first_process_name_cn", work.firstProcessNameCn);
+        row.put("child_material_code", demand.materialCode);
+        row.put("child_material_name_cn", demand.materialNameCn);
+        row.put("demand_qty", round3(demandQty));
+        row.put("stock_qty", round3(stockQty));
+        row.put("shortage_qty", round3(shortageQty));
+        row.put("max_schedulable_qty", Double.isFinite(maxSchedulableQty) ? round3(Math.max(0d, maxSchedulableQty)) : null);
+        row.put("inventory_missing_flag", missingFlag);
+        rows.add(localizeRow(row));
+      }
+
+      double boundedMaxQty = Double.isFinite(orderMaxSchedulable) ? Math.max(0d, orderMaxSchedulable) : work.remainingOrderQty;
+      boundedMaxQty = Math.min(work.remainingOrderQty, boundedMaxQty);
+      String dataStatus = missingStock ? "MISSING_STOCK" : "OK";
+      if (missingStock) {
+        boundedMaxQty = 0d;
+      }
+      int schedulableFlag = boundedMaxQty > 1e-9d ? 1 : 0;
+
+      for (Map<String, Object> row : rows) {
+        if (!Objects.equals(work.orderNo, row.get("order_no"))) {
+          continue;
+        }
+        row.put("order_max_schedulable_qty", round3(boundedMaxQty));
+        row.put("schedulable_flag", schedulableFlag);
+        row.put("data_status", dataStatus);
+      }
+
+      OrderMaterialConstraint constraint = new OrderMaterialConstraint();
+      constraint.maxSchedulableQty = round3(Math.max(0d, boundedMaxQty));
+      constraint.dataStatus = dataStatus;
+      constraint.firstProcessCode = work.firstProcessCode;
+      constraintByOrderNo.put(work.orderNo, constraint);
+    }
+
+    rows.sort((a, b) -> {
+      String aOrderNo = String.valueOf(a.get("order_no"));
+      String bOrderNo = String.valueOf(b.get("order_no"));
+      int byOrder = aOrderNo.compareTo(bOrderNo);
+      if (byOrder != 0) {
+        return byOrder;
+      }
+      return String.valueOf(a.get("child_material_code")).compareTo(String.valueOf(b.get("child_material_code")));
+    });
+    return new OrderMaterialConstraintSnapshot(rows, constraintByOrderNo);
+  }
+
+  private Map<String, Map<String, Object>> queryInventoryByMaterialCodesInParallel(
+    List<String> materialCodes,
+    boolean refreshFromErp
+  ) {
+    if (materialCodes == null || materialCodes.isEmpty()) {
+      return Map.of();
+    }
+
+    List<String> normalizedCodes = materialCodes.stream()
+      .map(MvpStoreService::normalizeCode)
+      .filter(code -> code != null && !code.isBlank())
+      .distinct()
+      .toList();
+    if (normalizedCodes.isEmpty()) {
+      return Map.of();
+    }
+    if (!refreshFromErp || normalizedCodes.size() <= ORDER_MATERIAL_INVENTORY_PARALLEL_CHUNK_SIZE) {
+      return erpDataManager.getMaterialInventoryByCodes(normalizedCodes, refreshFromErp);
+    }
+
+    List<List<String>> chunks = new ArrayList<>();
+    for (int start = 0; start < normalizedCodes.size(); start += ORDER_MATERIAL_INVENTORY_PARALLEL_CHUNK_SIZE) {
+      int end = Math.min(normalizedCodes.size(), start + ORDER_MATERIAL_INVENTORY_PARALLEL_CHUNK_SIZE);
+      chunks.add(new ArrayList<>(normalizedCodes.subList(start, end)));
+    }
+    if (chunks.size() <= 1) {
+      return erpDataManager.getMaterialInventoryByCodes(normalizedCodes, refreshFromErp);
+    }
+
+    int poolSize = Math.max(1, Math.min(ORDER_MATERIAL_INVENTORY_PARALLEL_THREADS, chunks.size()));
+    ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+    try {
+      List<CompletableFuture<Map<String, Map<String, Object>>>> futures = new ArrayList<>();
+      for (List<String> chunk : chunks) {
+        futures.add(
+          CompletableFuture.supplyAsync(() -> erpDataManager.getMaterialInventoryByCodes(chunk, true), executor)
+        );
+      }
+
+      Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
+      for (CompletableFuture<Map<String, Map<String, Object>>> future : futures) {
+        Map<String, Map<String, Object>> part = future.join();
+        if (part == null || part.isEmpty()) {
+          continue;
+        }
+        merged.putAll(part);
+      }
+      return merged;
+    } catch (CompletionException ex) {
+      return erpDataManager.getMaterialInventoryByCodes(normalizedCodes, refreshFromErp);
+    } finally {
+      executor.shutdown();
+      try {
+        if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+          executor.shutdownNow();
+        }
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  private void applyOrderMaterialConstraintsForSchedule(
+    MvpDomain.State scheduleState,
+    Map<String, OrderMaterialConstraint> constraintByOrderNo
+  ) {
+    if (scheduleState == null || scheduleState.orders == null || scheduleState.orders.isEmpty() || constraintByOrderNo == null) {
+      return;
+    }
+    String defaultArrivalDate = scheduleState.startDate == null ? null : scheduleState.startDate.toString();
+    for (MvpDomain.Order order : scheduleState.orders) {
+      if (order == null || !hasRemainingQty(order)) {
+        continue;
+      }
+      OrderMaterialConstraint constraint = constraintByOrderNo.get(order.orderNo);
+      if (constraint == null) {
+        continue;
+      }
+      if (order.businessData == null) {
+        order.businessData = new MvpDomain.OrderBusinessData();
+      }
+      order.businessData.semiFinishedCode = "ORDER_MATERIAL_" + normalizeCode(order.orderNo);
+      order.businessData.semiFinishedInventory = Math.max(0d, constraint.maxSchedulableQty);
+      order.businessData.semiFinishedWip = 0d;
+      order.businessData.pendingInboundQty = 0d;
+      if (defaultArrivalDate != null && !defaultArrivalDate.isBlank()) {
+        order.businessData.purchaseDueDate = defaultArrivalDate;
+        order.businessData.injectionDueDate = defaultArrivalDate;
+      }
+    }
+  }
+
+  private static boolean looksLikeErpProductionOrderNo(String orderNo) {
+    String normalized = normalizeCode(orderNo);
+    if (normalized == null || normalized.isBlank()) {
+      return false;
+    }
+    return normalized.matches("\\d{3}MO\\d+");
+  }
+
+  private String resolveFirstProcessCode(String productCode) {
+    String normalizedProductCode = normalizeCode(productCode);
+    if (normalizedProductCode == null || normalizedProductCode.isBlank()) {
+      return "";
+    }
+    List<MvpDomain.ProcessStep> steps = state.processRoutes.get(normalizedProductCode);
+    if (steps == null || steps.isEmpty()) {
+      steps = state.processRoutes.get(productCode);
+    }
+    if (steps == null || steps.isEmpty()) {
+      return "";
+    }
+    return normalizeCode(steps.get(0).processCode);
   }
 
   public Map<String, Object> upsertOrder(Map<String, Object> payload, String requestId, String operator) {
@@ -679,9 +1177,13 @@ public class MvpStoreService {
         baseVersion = state.schedules.stream().filter(item -> item.versionNo.equals(baseVersionNo)).findFirst().orElse(null);
       }
 
+      OrderMaterialConstraintSnapshot materialConstraintSnapshot = buildOrderMaterialConstraintSnapshot(false);
+      MvpDomain.State scheduleState = deepCopyState(state);
+      applyOrderMaterialConstraintsForSchedule(scheduleState, materialConstraintSnapshot.constraintByOrderNo);
+
       List<String> lockedOrders = new ArrayList<>();
       List<MvpDomain.Order> orders = new ArrayList<>();
-      for (MvpDomain.Order order : state.orders) {
+      for (MvpDomain.Order order : scheduleState.orders) {
         if (!hasRemainingQty(order)) {
           continue;
         }
@@ -695,7 +1197,7 @@ public class MvpStoreService {
       phaseStart = System.nanoTime();
       String versionNo = "V%03d".formatted(state.schedules.size() + 1);
       MvpDomain.ScheduleVersion schedule = SchedulerEngine.generate(
-        state,
+        scheduleState,
         orders,
         requestId,
         versionNo,
@@ -718,6 +1220,7 @@ public class MvpStoreService {
       schedule.metadata.put("baseVersionResolved", baseVersion != null);
       schedule.metadata.put("schedule_strategy_code", strategyCode);
       schedule.metadata.put("schedule_strategy_name_cn", scheduleStrategyNameCn(strategyCode));
+      schedule.metadata.put("order_material_constraint_count", materialConstraintSnapshot.constraintByOrderNo.size());
       schedule.metadata.put("schedule_generate_phase_duration_ms", new LinkedHashMap<>(phaseDurationMs));
 
       long candidateOrderCount = orders.stream().map(order -> order.orderNo).filter(Objects::nonNull).distinct().count();
@@ -1783,6 +2286,10 @@ public class MvpStoreService {
         row.put("order_no", allocation.orderNo);
         row.put("order_type", "production");
         row.put("process_code", allocation.processCode);
+        row.put("company_code", firstNonBlank(allocation.companyCode, companyCodeForProcess(allocation.processCode)));
+        row.put("workshop_code", firstNonBlank(allocation.workshopCode, workshopCodeForProcess(allocation.processCode)));
+        row.put("line_code", firstNonBlank(allocation.lineCode, lineCodeForProcess(allocation.processCode)));
+        row.put("line_name", firstNonBlank(allocation.lineName, lineNameForCode(lineCodeForProcess(allocation.processCode))));
         row.put("calendar_date", allocation.date);
         row.put("shift_code", "D".equals(allocation.shiftCode) ? "DAY" : "NIGHT");
         row.put("plan_start_time", toDateTime(allocation.date, allocation.shiftCode, true));
@@ -1815,6 +2322,10 @@ public class MvpStoreService {
         row.put("order_no", task.orderNo);
         row.put("order_type", "production");
         row.put("process_code", task.processCode);
+        row.put("company_code", companyCodeForProcess(task.processCode));
+        row.put("workshop_code", workshopCodeForProcess(task.processCode));
+        row.put("line_code", lineCodeForProcess(task.processCode));
+        row.put("line_name", lineNameForCode(lineCodeForProcess(task.processCode)));
         row.put("calendar_date", null);
         row.put("shift_code", null);
         row.put("plan_start_time", null);
@@ -2640,6 +3151,7 @@ public class MvpStoreService {
         row.put("material_list_no", "ML-" + order.orderNo);
         row.put("product_code", order.items.isEmpty() ? "UNKNOWN" : order.items.get(0).productCode);
         row.put("product_name_cn", business.productName);
+        row.put("company_codes", joinContextValues(processContexts, "company_codes"));
         row.put("workshop_codes", joinContextValues(processContexts, "workshop_codes"));
         row.put("line_codes", joinContextValues(processContexts, "line_codes"));
         row.put("process_codes", joinContextValues(processContexts, "process_code"));
@@ -2966,11 +3478,13 @@ public class MvpStoreService {
         }
         for (int i = 1; i <= count; i += 1) {
           MvpDomain.LineProcessBinding binding = lineBindings.get((i - 1) % lineBindings.size());
+          String companyCode = normalizeCompanyCode(binding.companyCode);
           String lineCode = normalizeCode(binding.lineCode);
           String workshopCode = normalizeCode(binding.workshopCode);
           Map<String, Object> row = new LinkedHashMap<>();
           row.put("equipment_code", lineCode + "-" + processCode + "-EQ-" + i);
           row.put("process_code", processCode);
+          row.put("company_code", companyCode);
           row.put("line_code", lineCode);
           row.put("line_name", binding.lineName == null || binding.lineName.isBlank() ? lineCode : binding.lineName.trim());
           row.put("workshop_code", workshopCode);
@@ -3023,11 +3537,13 @@ public class MvpStoreService {
           lineBindings = List.of(defaultLineBindingForProcess(process.processCode));
         }
         for (MvpDomain.LineProcessBinding binding : lineBindings) {
+          String companyCode = normalizeCompanyCode(binding.companyCode);
           String lineCode = normalizeCode(binding.lineCode);
           String workshopCode = normalizeCode(binding.workshopCode);
           Map<String, Object> row = new LinkedHashMap<>();
           row.put("equipment_code", lineCode + "-" + process.processCode + "-EQ-1");
           row.put("process_code", process.processCode);
+          row.put("company_code", companyCode);
           row.put("line_code", lineCode);
           row.put("line_name", binding.lineName == null || binding.lineName.isBlank() ? lineCode : binding.lineName.trim());
           row.put("workshop_code", workshopCode);
@@ -3070,6 +3586,7 @@ public class MvpStoreService {
         row.put("shift_start_time", toDateTime(rowData.date.toString(), rowData.shiftCode, true));
         row.put("shift_end_time", toDateTime(rowData.date.toString(), rowData.shiftCode, false));
         row.put("open_flag", rowData.open ? 1 : 0);
+        row.put("company_code", companyCodesSummaryAll());
         row.put("workshop_code", workshopCodesSummaryAll());
         row.put("last_update_time", now);
         rows.add(localizeRow(row));
@@ -3079,6 +3596,18 @@ public class MvpStoreService {
   }
 
   public Map<String, Object> getMasterdataConfig(String requestId) {
+    synchronized (lock) {
+      Map<String, Object> out = new LinkedHashMap<>();
+      out.put("request_id", requestId);
+      out.put("process_configs", listProcessConfigRowsForEdit());
+      out.put("line_topology", listLineTopologyRowsForEdit());
+      out.put("initial_carryover_occupancy", listInitialCarryoverRowsForEdit());
+      out.put("material_availability", listMaterialAvailabilityRowsForEdit());
+      return out;
+    }
+  }
+
+  public Map<String, Object> getScheduleCalendarRules(String requestId) {
     synchronized (lock) {
       Map<String, Object> out = new LinkedHashMap<>();
       out.put("request_id", requestId);
@@ -3092,12 +3621,6 @@ public class MvpStoreService {
         "date_shift_mode_by_date",
         state.dateShiftModeByDate == null ? Map.of() : new LinkedHashMap<>(state.dateShiftModeByDate)
       );
-      out.put("process_configs", listProcessConfigRowsForEdit());
-      out.put("line_topology", listLineTopologyRowsForEdit());
-      out.put("section_leader_bindings", listSectionLeaderBindingsRowsForEdit());
-      out.put("resource_pool", listResourcePoolRowsForEdit());
-      out.put("initial_carryover_occupancy", listInitialCarryoverRowsForEdit());
-      out.put("material_availability", listMaterialAvailabilityRowsForEdit());
       return out;
     }
   }
@@ -3108,6 +3631,7 @@ public class MvpStoreService {
     String operator
   ) {
     synchronized (lock) {
+      rejectDeprecatedMasterdataConfigFields(payload);
       int updatedRowCount = 0;
 
       boolean hasProcessConfigs = payload.containsKey("process_configs") || payload.containsKey("processConfigs");
@@ -3130,34 +3654,9 @@ public class MvpStoreService {
         updatedRowCount += lineTopologyRows.size();
       }
 
-      boolean hasSectionLeaderBindings = payload.containsKey("section_leader_bindings")
-        || payload.containsKey("sectionLeaderBindings");
-      List<Map<String, Object>> sectionLeaderRows = maps(payload.get("section_leader_bindings"));
-      if (sectionLeaderRows.isEmpty()) {
-        sectionLeaderRows = maps(payload.get("sectionLeaderBindings"));
-      }
-      if (hasSectionLeaderBindings) {
-        applySectionLeaderBindingsPatch(sectionLeaderRows);
-        updatedRowCount += sectionLeaderRows.size();
-      }
-
-      boolean planningWindowUpdated = applyPlanningWindowPatch(payload);
-      if (planningWindowUpdated) {
-        updatedRowCount += 1;
-      }
-      boolean planningCalendarUpdated = applyPlanningCalendarPatch(payload);
-      if (planningCalendarUpdated) {
-        updatedRowCount += 1;
-      }
-
-      boolean hasResourcePool = payload.containsKey("resource_pool") || payload.containsKey("resourcePool");
-      List<Map<String, Object>> resourcePool = maps(payload.get("resource_pool"));
-      if (resourcePool.isEmpty()) {
-        resourcePool = maps(payload.get("resourcePool"));
-      }
-      if (hasResourcePool) {
-        applyResourcePoolPatch(resourcePool);
-        updatedRowCount += resourcePool.size();
+      if (hasProcessConfigs) {
+        // Resource and material baseline are now system-managed and derived from process/rule window.
+        rebuildMasterdataHorizonWindow();
       }
 
       boolean hasInitialCarryoverRows = payload.containsKey("initial_carryover_occupancy")
@@ -3187,17 +3686,35 @@ public class MvpStoreService {
         "UPDATE_MASTERDATA_CONFIG",
         operator,
         requestId,
-        "updated_rows="
-          + updatedRowCount
-          + ", planning_window_updated="
-          + planningWindowUpdated
-          + ", planning_calendar_updated="
-          + planningCalendarUpdated
+        "updated_rows=" + updatedRowCount
       );
 
       Map<String, Object> out = getMasterdataConfig(requestId);
       out.put("updated_row_count", updatedRowCount);
       out.put("message", "Masterdata config updated.");
+      return out;
+    }
+  }
+
+  public Map<String, Object> saveScheduleCalendarRules(
+    Map<String, Object> payload,
+    String requestId,
+    String operator
+  ) {
+    synchronized (lock) {
+      boolean planningWindowUpdated = applyPlanningWindowPatch(payload);
+      boolean planningCalendarUpdated = applyPlanningCalendarPatch(payload);
+      appendAudit(
+        "SCHEDULE_CALENDAR_RULES",
+        "CONFIG",
+        "UPDATE_SCHEDULE_CALENDAR_RULES",
+        operator,
+        requestId,
+        "window_updated=" + planningWindowUpdated + ", calendar_updated=" + planningCalendarUpdated
+      );
+      Map<String, Object> out = getScheduleCalendarRules(requestId);
+      out.put("updated", planningWindowUpdated || planningCalendarUpdated);
+      out.put("message", "Schedule calendar rules updated.");
       return out;
     }
   }
@@ -3516,6 +4033,7 @@ public class MvpStoreService {
   private List<Map<String, Object>> listLineTopologyRowsForEdit() {
     List<Map<String, Object>> rows = new ArrayList<>();
     for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
+      String companyCode = normalizeCompanyCode(binding.companyCode);
       String workshopCode = normalizeCode(binding.workshopCode);
       String lineCode = normalizeCode(binding.lineCode);
       String lineName = binding.lineName == null || binding.lineName.isBlank() ? lineCode : binding.lineName.trim();
@@ -3523,15 +4041,33 @@ public class MvpStoreService {
       if (workshopCode.isBlank() || lineCode.isBlank() || processCode.isBlank()) {
         continue;
       }
+      MvpDomain.ProcessConfig processConfig = processConfigByCode(processCode);
+      double capacityPerShift = binding.capacityPerShift > 0d
+        ? binding.capacityPerShift
+        : (processConfig == null ? 1d : processConfig.capacityPerShift);
+      int requiredWorkers = binding.requiredWorkers > 0
+        ? binding.requiredWorkers
+        : (processConfig == null ? 1 : Math.max(1, processConfig.requiredWorkers));
+      int requiredMachines = binding.requiredMachines > 0
+        ? binding.requiredMachines
+        : (processConfig == null ? 1 : Math.max(1, processConfig.requiredMachines));
       Map<String, Object> row = new LinkedHashMap<>();
+      row.put("company_code", companyCode);
       row.put("workshop_code", workshopCode);
       row.put("line_code", lineCode);
       row.put("line_name", lineName);
       row.put("process_code", processCode);
+      row.put("capacity_per_shift", round2(capacityPerShift));
+      row.put("required_workers", requiredWorkers);
+      row.put("required_machines", requiredMachines);
       row.put("enabled_flag", binding.enabled ? 1 : 0);
       rows.add(localizeRow(row));
     }
     rows.sort((a, b) -> {
+      int byCompany = String.valueOf(a.get("company_code")).compareTo(String.valueOf(b.get("company_code")));
+      if (byCompany != 0) {
+        return byCompany;
+      }
       int byWorkshop = String.valueOf(a.get("workshop_code")).compareTo(String.valueOf(b.get("workshop_code")));
       if (byWorkshop != 0) {
         return byWorkshop;
@@ -3539,105 +4075,6 @@ public class MvpStoreService {
       int byLine = String.valueOf(a.get("line_code")).compareTo(String.valueOf(b.get("line_code")));
       if (byLine != 0) {
         return byLine;
-      }
-      return String.valueOf(a.get("process_code")).compareTo(String.valueOf(b.get("process_code")));
-    });
-    return rows;
-  }
-
-  private List<Map<String, Object>> listSectionLeaderBindingsRowsForEdit() {
-    Map<String, String> lineNameByCode = new HashMap<>();
-    Map<String, String> workshopByLineCode = new HashMap<>();
-    for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
-      String lineCode = normalizeCode(binding.lineCode);
-      if (lineCode.isBlank()) {
-        continue;
-      }
-      String lineName = binding.lineName == null || binding.lineName.isBlank() ? lineCode : binding.lineName.trim();
-      lineNameByCode.putIfAbsent(lineCode, lineName);
-      workshopByLineCode.putIfAbsent(lineCode, normalizeCode(binding.workshopCode));
-    }
-
-    List<Map<String, Object>> rows = new ArrayList<>();
-    for (MvpDomain.SectionLeaderBinding binding : state.sectionLeaderBindings) {
-      String leaderId = normalizeCode(binding.leaderId);
-      String lineCode = normalizeCode(binding.lineCode);
-      if (leaderId.isBlank() || lineCode.isBlank()) {
-        continue;
-      }
-      Map<String, Object> row = new LinkedHashMap<>();
-      row.put("leader_id", leaderId);
-      row.put("leader_name", binding.leaderName == null ? "" : binding.leaderName.trim());
-      row.put("line_code", lineCode);
-      row.put("line_name", lineNameByCode.getOrDefault(lineCode, lineCode));
-      row.put("workshop_code", workshopByLineCode.getOrDefault(lineCode, ""));
-      row.put("active_flag", binding.active ? 1 : 0);
-      rows.add(localizeRow(row));
-    }
-    rows.sort((a, b) -> {
-      int byLeader = String.valueOf(a.get("leader_id")).compareTo(String.valueOf(b.get("leader_id")));
-      if (byLeader != 0) {
-        return byLeader;
-      }
-      return String.valueOf(a.get("line_code")).compareTo(String.valueOf(b.get("line_code")));
-    });
-    return rows;
-  }
-
-  private List<Map<String, Object>> listResourcePoolRowsForEdit() {
-    Map<String, Integer> workersByKey = new HashMap<>();
-    for (MvpDomain.ResourceRow row : state.workerPools) {
-      workersByKey.put(row.date + "#" + normalizeShiftCodeLabel(row.shiftCode) + "#" + normalizeCode(row.processCode), row.available);
-    }
-    Map<String, Integer> machinesByKey = new HashMap<>();
-    for (MvpDomain.ResourceRow row : state.machinePools) {
-      machinesByKey.put(row.date + "#" + normalizeShiftCodeLabel(row.shiftCode) + "#" + normalizeCode(row.processCode), row.available);
-    }
-    Map<String, Integer> openByDateShift = new HashMap<>();
-    for (MvpDomain.ShiftRow row : state.shiftCalendar) {
-      openByDateShift.put(row.date + "#" + normalizeShiftCodeLabel(row.shiftCode), row.open ? 1 : 0);
-    }
-
-    Set<String> allKeys = new HashSet<>();
-    allKeys.addAll(workersByKey.keySet());
-    allKeys.addAll(machinesByKey.keySet());
-
-    List<Map<String, Object>> rows = new ArrayList<>();
-    for (String key : allKeys) {
-      String[] parts = key.split("#", 3);
-      if (parts.length < 3) {
-        continue;
-      }
-      String date = parts[0];
-      String shiftCode = parts[1];
-      String processCode = parts[2];
-      if (date.isBlank() || shiftCode.isBlank() || processCode.isBlank()) {
-        continue;
-      }
-      String dateShiftKey = date + "#" + shiftCode;
-      Map<String, Object> row = new LinkedHashMap<>();
-      row.put("calendar_date", date);
-      row.put("shift_code", shiftCode);
-      row.put("process_code", processCode);
-      row.put("workers_available", workersByKey.getOrDefault(key, 0));
-      row.put("machines_available", machinesByKey.getOrDefault(key, 0));
-      row.put("open_flag", openByDateShift.getOrDefault(dateShiftKey, 1));
-      rows.add(localizeRow(row));
-    }
-
-    rows.sort((a, b) -> {
-      String aDate = String.valueOf(a.get("calendar_date"));
-      String bDate = String.valueOf(b.get("calendar_date"));
-      int byDate = aDate.compareTo(bDate);
-      if (byDate != 0) {
-        return byDate;
-      }
-      int byShift = Integer.compare(
-        shiftSortIndex(String.valueOf(a.get("shift_code"))),
-        shiftSortIndex(String.valueOf(b.get("shift_code")))
-      );
-      if (byShift != 0) {
-        return byShift;
       }
       return String.valueOf(a.get("process_code")).compareTo(String.valueOf(b.get("process_code")));
     });
@@ -3670,12 +4107,17 @@ public class MvpStoreService {
       if (date.isBlank() || shiftCode.isBlank() || processCode.isBlank()) {
         continue;
       }
+      int occupiedWorkers = Math.max(0, occupiedWorkersByKey.getOrDefault(key, 0));
+      int occupiedMachines = Math.max(0, occupiedMachinesByKey.getOrDefault(key, 0));
+      if (occupiedWorkers <= 0 && occupiedMachines <= 0) {
+        continue;
+      }
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("calendar_date", date);
       row.put("shift_code", shiftCode);
       row.put("process_code", processCode);
-      row.put("occupied_workers", Math.max(0, occupiedWorkersByKey.getOrDefault(key, 0)));
-      row.put("occupied_machines", Math.max(0, occupiedMachinesByKey.getOrDefault(key, 0)));
+      row.put("occupied_workers", occupiedWorkers);
+      row.put("occupied_machines", occupiedMachines);
       rows.add(localizeRow(row));
     }
 
@@ -3730,6 +4172,17 @@ public class MvpStoreService {
       return String.valueOf(a.get("process_code")).compareTo(String.valueOf(b.get("process_code")));
     });
     return rows;
+  }
+
+  private void rejectDeprecatedMasterdataConfigFields(Map<String, Object> payload) {
+    if (payload == null || payload.isEmpty()) {
+      return;
+    }
+    for (String key : DEPRECATED_MASTERDATA_CONFIG_FIELDS) {
+      if (payload.containsKey(key)) {
+        throw badRequest("Field is no longer supported in masterdata/config: " + key + ". Use /schedule-calendar/rules.");
+      }
+    }
   }
 
   private boolean applyPlanningWindowPatch(Map<String, Object> payload) {
@@ -3873,8 +4326,12 @@ public class MvpStoreService {
           int occupiedMachines = clampInt(occupiedMachinesByKey.getOrDefault(usageKey, 0), 0, machines);
           workerRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, workers));
           machineRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, machines));
-          initialWorkerRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedWorkers));
-          initialMachineRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedMachines));
+          if (occupiedWorkers > 0) {
+            initialWorkerRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedWorkers));
+          }
+          if (occupiedMachines > 0) {
+            initialMachineRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedMachines));
+          }
         }
 
         for (Map.Entry<String, List<MvpDomain.ProcessStep>> route : state.processRoutes.entrySet()) {
@@ -4002,7 +4459,6 @@ public class MvpStoreService {
       return normalizeCode(a.processCode).compareTo(normalizeCode(b.processCode));
     });
     state.lineProcessBindings = nextLineBindings;
-    pruneSectionLeaderBindingsByLineTopology();
 
     state.workerPools = filterResourceRowsByProcessCodes(state.workerPools, validProcessCodes);
     state.machinePools = filterResourceRowsByProcessCodes(state.machinePools, validProcessCodes);
@@ -4066,14 +4522,46 @@ public class MvpStoreService {
     return nextRows;
   }
 
-  private void applyLineTopologyPatch(List<Map<String, Object>> rows) {
-    Set<String> validProcessCodes = new HashSet<>();
+  private Set<String> routeProcessCodeSet() {
+    Set<String> out = new HashSet<>();
+    for (List<MvpDomain.ProcessStep> steps : state.processRoutes.values()) {
+      if (steps == null) {
+        continue;
+      }
+      for (MvpDomain.ProcessStep step : steps) {
+        String processCode = normalizeCode(step.processCode);
+        if (!processCode.isBlank()) {
+          out.add(processCode);
+        }
+      }
+    }
+    return out;
+  }
+
+  private MvpDomain.ProcessConfig processConfigByCode(String processCode) {
+    String normalized = normalizeCode(processCode);
+    if (normalized.isBlank()) {
+      return null;
+    }
     for (MvpDomain.ProcessConfig process : state.processes) {
-      validProcessCodes.add(normalizeCode(process.processCode));
+      if (normalizeCode(process.processCode).equals(normalized)) {
+        return process;
+      }
+    }
+    return null;
+  }
+
+  private void applyLineTopologyPatch(List<Map<String, Object>> rows) {
+    Set<String> validProcessCodes = routeProcessCodeSet();
+    if (validProcessCodes.isEmpty()) {
+      for (MvpDomain.ProcessConfig process : state.processes) {
+        validProcessCodes.add(normalizeCode(process.processCode));
+      }
     }
 
     Map<String, MvpDomain.LineProcessBinding> byKey = new LinkedHashMap<>();
     for (Map<String, Object> row : rows) {
+      String companyCode = normalizeCompanyCode(string(row, "company_code", string(row, "companyCode", null)));
       String workshopCode = normalizeCode(string(row, "workshop_code", string(row, "workshopCode", null)));
       String lineCode = normalizeCode(string(row, "line_code", string(row, "lineCode", null)));
       String processCode = normalizeCode(string(row, "process_code", string(row, "processCode", null)));
@@ -4083,23 +4571,59 @@ public class MvpStoreService {
       if (!validProcessCodes.contains(processCode)) {
         throw badRequest("Unknown process_code in line_topology: " + processCode);
       }
+      MvpDomain.ProcessConfig processConfig = processConfigByCode(processCode);
+      double defaultCapacity = processConfig == null ? 1d : processConfig.capacityPerShift;
+      int defaultWorkers = processConfig == null ? 1 : Math.max(1, processConfig.requiredWorkers);
+      int defaultMachines = processConfig == null ? 1 : Math.max(1, processConfig.requiredMachines);
+      double capacityPerShift = number(
+        row,
+        "capacity_per_shift",
+        number(row, "capacityPerShift", number(row, "line_capacity_per_shift", defaultCapacity))
+      );
+      int requiredWorkers = (int) Math.round(number(
+        row,
+        "required_workers",
+        number(row, "requiredWorkers", number(row, "required_manpower_per_group", defaultWorkers))
+      ));
+      int requiredMachines = (int) Math.round(number(
+        row,
+        "required_machines",
+        number(row, "requiredMachines", number(row, "required_equipment_count", defaultMachines))
+      ));
+      if (capacityPerShift <= 0d) {
+        throw badRequest("capacity_per_shift must be > 0 in line_topology for " + processCode + ".");
+      }
+      if (requiredWorkers <= 0) {
+        throw badRequest("required_workers must be > 0 in line_topology for " + processCode + ".");
+      }
+      if (requiredMachines <= 0) {
+        throw badRequest("required_machines must be > 0 in line_topology for " + processCode + ".");
+      }
       String lineName = string(row, "line_name", string(row, "lineName", lineCode));
       boolean enabled = bool(row, "enabled_flag", bool(row, "enabledFlag", bool(row, "enabled", true)));
-      String key = workshopCode + "#" + lineCode + "#" + processCode;
+      String key = companyCode + "#" + workshopCode + "#" + lineCode + "#" + processCode;
       byKey.put(
         key,
         new MvpDomain.LineProcessBinding(
+          companyCode,
           workshopCode,
           lineCode,
           lineName == null || lineName.isBlank() ? lineCode : lineName.trim(),
           processCode,
-          enabled
+          enabled,
+          round2(capacityPerShift),
+          requiredWorkers,
+          requiredMachines
         )
       );
     }
 
     List<MvpDomain.LineProcessBinding> nextRows = new ArrayList<>(byKey.values());
     nextRows.sort((a, b) -> {
+      int byCompany = normalizeCompanyCode(a.companyCode).compareTo(normalizeCompanyCode(b.companyCode));
+      if (byCompany != 0) {
+        return byCompany;
+      }
       int byWorkshop = normalizeCode(a.workshopCode).compareTo(normalizeCode(b.workshopCode));
       if (byWorkshop != 0) {
         return byWorkshop;
@@ -4111,224 +4635,6 @@ public class MvpStoreService {
       return normalizeCode(a.processCode).compareTo(normalizeCode(b.processCode));
     });
     state.lineProcessBindings = nextRows;
-    pruneSectionLeaderBindingsByLineTopology();
-  }
-
-  private void applySectionLeaderBindingsPatch(List<Map<String, Object>> rows) {
-    Set<String> validLineCodes = new HashSet<>();
-    for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
-      String lineCode = normalizeCode(binding.lineCode);
-      if (!lineCode.isBlank()) {
-        validLineCodes.add(lineCode);
-      }
-    }
-
-    Map<String, MvpDomain.SectionLeaderBinding> byKey = new LinkedHashMap<>();
-    for (Map<String, Object> row : rows) {
-      String leaderId = normalizeCode(string(
-        row,
-        "leader_id",
-        string(row, "leaderId", string(row, "section_leader_id", string(row, "sectionLeaderId", null)))
-      ));
-      String lineCode = normalizeCode(string(row, "line_code", string(row, "lineCode", null)));
-      if (leaderId.isBlank() || lineCode.isBlank()) {
-        throw badRequest("leader_id and line_code are required in section_leader_bindings.");
-      }
-      if (!validLineCodes.contains(lineCode)) {
-        throw badRequest("Unknown line_code in section_leader_bindings: " + lineCode);
-      }
-      String leaderName = string(row, "leader_name", string(row, "leaderName", leaderId));
-      boolean active = bool(row, "active_flag", bool(row, "activeFlag", bool(row, "active", true)));
-      String key = leaderId + "#" + lineCode;
-      byKey.put(
-        key,
-        new MvpDomain.SectionLeaderBinding(
-          leaderId,
-          leaderName == null || leaderName.isBlank() ? leaderId : leaderName.trim(),
-          lineCode,
-          active
-        )
-      );
-    }
-
-    List<MvpDomain.SectionLeaderBinding> nextRows = new ArrayList<>(byKey.values());
-    nextRows.sort((a, b) -> {
-      int byLeader = normalizeCode(a.leaderId).compareTo(normalizeCode(b.leaderId));
-      if (byLeader != 0) {
-        return byLeader;
-      }
-      return normalizeCode(a.lineCode).compareTo(normalizeCode(b.lineCode));
-    });
-    state.sectionLeaderBindings = nextRows;
-  }
-
-  private void pruneSectionLeaderBindingsByLineTopology() {
-    Set<String> validLineCodes = new HashSet<>();
-    for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
-      String lineCode = normalizeCode(binding.lineCode);
-      if (!lineCode.isBlank()) {
-        validLineCodes.add(lineCode);
-      }
-    }
-    List<MvpDomain.SectionLeaderBinding> kept = new ArrayList<>();
-    for (MvpDomain.SectionLeaderBinding binding : state.sectionLeaderBindings) {
-      String lineCode = normalizeCode(binding.lineCode);
-      if (validLineCodes.contains(lineCode)) {
-        kept.add(binding);
-      }
-    }
-    state.sectionLeaderBindings = kept;
-  }
-
-  private void applyResourcePoolPatch(List<Map<String, Object>> rows) {
-    Set<String> validProcessCodes = new HashSet<>();
-    for (MvpDomain.ProcessConfig process : state.processes) {
-      validProcessCodes.add(normalizeCode(process.processCode));
-    }
-
-    Map<String, Integer> workersByKey = new LinkedHashMap<>();
-    Map<String, Integer> machinesByKey = new LinkedHashMap<>();
-    Map<String, LocalDate> dateByKey = new HashMap<>();
-    Map<String, String> shiftByKey = new HashMap<>();
-    Map<String, String> processByKey = new HashMap<>();
-    Map<String, Boolean> openByDateShift = new LinkedHashMap<>();
-
-    for (Map<String, Object> row : rows) {
-      String dateText = string(row, "calendar_date", string(row, "date", null));
-      if (dateText == null || dateText.isBlank()) {
-        throw badRequest("calendar_date is required in resource_pool.");
-      }
-      LocalDate date = parseConfigDate(dateText);
-      String shiftCode = normalizeShiftCode(string(row, "shift_code", string(row, "shiftCode", null)));
-      if (shiftCode.isBlank()) {
-        throw badRequest("shift_code is required in resource_pool.");
-      }
-      if (!isDateInCurrentHorizon(date) || !isShiftEnabledInCurrentSetting(shiftCode)) {
-        continue;
-      }
-      String processCode = normalizeCode(string(row, "process_code", string(row, "processCode", null)));
-      if (processCode.isBlank()) {
-        throw badRequest("process_code is required in resource_pool.");
-      }
-      if (!validProcessCodes.contains(processCode)) {
-        throw badRequest("Unknown process_code in resource_pool: " + processCode);
-      }
-
-      int workersAvailable = (int) Math.round(number(
-        row,
-        "workers_available",
-        number(row, "available_workers", number(row, "workers", 0d))
-      ));
-      int machinesAvailable = (int) Math.round(number(
-        row,
-        "machines_available",
-        number(row, "available_machines", number(row, "machines", 0d))
-      ));
-      if (workersAvailable < 0 || machinesAvailable < 0) {
-        throw badRequest("workers_available and machines_available must be >= 0.");
-      }
-
-      String key = date + "#" + shiftCode + "#" + processCode;
-      if (workersByKey.containsKey(key)) {
-        throw badRequest("Duplicate date/shift/process in resource_pool: " + date + "/" + normalizeShiftCodeLabel(shiftCode) + "/" + processCode);
-      }
-      workersByKey.put(key, workersAvailable);
-      machinesByKey.put(key, machinesAvailable);
-      dateByKey.put(key, date);
-      shiftByKey.put(key, shiftCode);
-      processByKey.put(key, processCode);
-
-      boolean open = bool(row, "open_flag", bool(row, "openFlag", true));
-      openByDateShift.put(date + "#" + shiftCode, open);
-    }
-
-    List<MvpDomain.ResourceRow> nextWorkerPools = new ArrayList<>();
-    List<MvpDomain.ResourceRow> nextMachinePools = new ArrayList<>();
-    for (String key : workersByKey.keySet()) {
-      LocalDate date = dateByKey.get(key);
-      String shiftCode = shiftByKey.get(key);
-      String processCode = processByKey.get(key);
-      nextWorkerPools.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, Math.max(0, workersByKey.getOrDefault(key, 0))));
-      nextMachinePools.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, Math.max(0, machinesByKey.getOrDefault(key, 0))));
-    }
-    nextWorkerPools.sort((a, b) -> {
-      int byDate = a.date.compareTo(b.date);
-      if (byDate != 0) {
-        return byDate;
-      }
-      int byShift = Integer.compare(shiftSortIndex(a.shiftCode), shiftSortIndex(b.shiftCode));
-      if (byShift != 0) {
-        return byShift;
-      }
-      return normalizeCode(a.processCode).compareTo(normalizeCode(b.processCode));
-    });
-    nextMachinePools.sort((a, b) -> {
-      int byDate = a.date.compareTo(b.date);
-      if (byDate != 0) {
-        return byDate;
-      }
-      int byShift = Integer.compare(shiftSortIndex(a.shiftCode), shiftSortIndex(b.shiftCode));
-      if (byShift != 0) {
-        return byShift;
-      }
-      return normalizeCode(a.processCode).compareTo(normalizeCode(b.processCode));
-    });
-
-    List<MvpDomain.ShiftRow> nextShiftCalendar = new ArrayList<>();
-    String[] shiftCodes = {"D", "N"};
-    for (int i = 0; i < Math.max(1, state.horizonDays); i += 1) {
-      LocalDate date = state.startDate.plusDays(i);
-      for (int s = 0; s < Math.max(1, Math.min(2, state.shiftsPerDay)); s += 1) {
-        String shiftCode = shiftCodes[s];
-        String dateShiftKey = date + "#" + shiftCode;
-        boolean open = openByDateShift.containsKey(dateShiftKey)
-          ? Boolean.TRUE.equals(openByDateShift.get(dateShiftKey))
-          : isShiftOpenInDateMode(shiftCode, resolveDateShiftMode(date));
-        nextShiftCalendar.add(new MvpDomain.ShiftRow(date, shiftCode, open));
-      }
-    }
-    nextShiftCalendar.sort((a, b) -> {
-      int byDate = a.date.compareTo(b.date);
-      if (byDate != 0) {
-        return byDate;
-      }
-      return Integer.compare(shiftSortIndex(a.shiftCode), shiftSortIndex(b.shiftCode));
-    });
-
-    state.workerPools = nextWorkerPools;
-    state.machinePools = nextMachinePools;
-    state.shiftCalendar = nextShiftCalendar;
-    state.initialWorkerOccupancy = clampOccupancyRows(state.initialWorkerOccupancy, workersByKey);
-    state.initialMachineOccupancy = clampOccupancyRows(state.initialMachineOccupancy, machinesByKey);
-  }
-
-  private List<MvpDomain.ResourceRow> clampOccupancyRows(
-    List<MvpDomain.ResourceRow> source,
-    Map<String, Integer> capacityByKey
-  ) {
-    List<MvpDomain.ResourceRow> out = new ArrayList<>();
-    Set<String> seen = new HashSet<>();
-    for (MvpDomain.ResourceRow row : source) {
-      String dateShiftProcessKey = row.date + "#" + normalizeShiftCode(row.shiftCode) + "#" + normalizeCode(row.processCode);
-      Integer cap = capacityByKey.get(dateShiftProcessKey);
-      if (cap == null || !seen.add(dateShiftProcessKey)) {
-        continue;
-      }
-      int value = clampInt(row.available, 0, Math.max(0, cap));
-      out.add(new MvpDomain.ResourceRow(row.date, normalizeShiftCode(row.shiftCode), normalizeCode(row.processCode), value));
-    }
-    out.sort((a, b) -> {
-      int byDate = a.date.compareTo(b.date);
-      if (byDate != 0) {
-        return byDate;
-      }
-      int byShift = Integer.compare(shiftSortIndex(a.shiftCode), shiftSortIndex(b.shiftCode));
-      if (byShift != 0) {
-        return byShift;
-      }
-      return normalizeCode(a.processCode).compareTo(normalizeCode(b.processCode));
-    });
-    return out;
   }
 
   private void applyInitialCarryoverPatch(List<Map<String, Object>> rows) {
@@ -4419,8 +4725,14 @@ public class MvpStoreService {
       LocalDate date = dateByKey.get(key);
       String shiftCode = shiftByKey.get(key);
       String processCode = processByKey.get(key);
-      nextWorkerRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedWorkersByKey.getOrDefault(key, 0)));
-      nextMachineRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedMachinesByKey.getOrDefault(key, 0)));
+      int occupiedWorkers = occupiedWorkersByKey.getOrDefault(key, 0);
+      int occupiedMachines = occupiedMachinesByKey.getOrDefault(key, 0);
+      if (occupiedWorkers > 0) {
+        nextWorkerRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedWorkers));
+      }
+      if (occupiedMachines > 0) {
+        nextMachineRows.add(new MvpDomain.ResourceRow(date, shiftCode, processCode, occupiedMachines));
+      }
     }
     nextWorkerRows.sort((a, b) -> {
       int byDate = a.date.compareTo(b.date);
@@ -5456,8 +5768,10 @@ public class MvpStoreService {
       row.put("process_code", processCode);
       row.put("process_name_cn", processNameCn(processCode));
       row.put("dependency_type", step.dependencyType == null ? "FS" : step.dependencyType);
+      row.put("company_code", companyCodeForProcess(processCode));
       row.put("workshop_code", workshopCodeForProcess(processCode));
       row.put("line_code", lineCodeForProcess(processCode));
+      row.put("company_codes", companyCodesForProcessSummary(processCode));
       row.put("workshop_codes", workshopCodesForProcessSummary(processCode));
       row.put("line_codes", lineCodesForProcessSummary(processCode));
       rows.add(row);
@@ -5473,10 +5787,20 @@ public class MvpStoreService {
     for (Map<String, Object> row : rows) {
       String processCode = firstString(row, "process_code");
       String processName = firstString(row, "process_name_cn");
+      String companyCode = firstString(row, "company_codes", "company_code");
       String workshopCode = firstString(row, "workshop_codes", "workshop_code");
       String lineCode = firstString(row, "line_codes", "line_code");
       String label = (processName == null || processName.isBlank()) ? (processCode == null ? "-" : processCode) : processName;
-      parts.add(label + " (" + (workshopCode == null ? "-" : workshopCode) + "/" + (lineCode == null ? "-" : lineCode) + ")");
+      parts.add(
+        label
+          + " ("
+          + (companyCode == null ? "-" : companyCode)
+          + "/"
+          + (workshopCode == null ? "-" : workshopCode)
+          + "/"
+          + (lineCode == null ? "-" : lineCode)
+          + ")"
+      );
     }
     return String.join(" -> ", parts);
   }
@@ -5530,6 +5854,7 @@ public class MvpStoreService {
     row.put("expected_start_time", expectedStartTime);
     row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
     row.put("expected_finish_time", expectedFinishTime);
+    row.put("company_codes", joinContextValues(processContexts, "company_codes"));
     row.put("workshop_codes", joinContextValues(processContexts, "workshop_codes"));
     row.put("line_codes", joinContextValues(processContexts, "line_codes"));
     row.put("process_codes", joinContextValues(processContexts, "process_code"));
@@ -5641,6 +5966,7 @@ public class MvpStoreService {
     row.put("expected_start_time", expectedStartTime);
     row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
     row.put("expected_finish_time", expectedFinishTime);
+    row.put("company_codes", joinContextValues(processContexts, "company_codes"));
     row.put("workshop_codes", joinContextValues(processContexts, "workshop_codes"));
     row.put("line_codes", joinContextValues(processContexts, "line_codes"));
     row.put("process_codes", joinContextValues(processContexts, "process_code"));
@@ -5694,6 +6020,7 @@ public class MvpStoreService {
     row.put("expected_start_time", expectedStartTime);
     row.put("expected_finish_date", expectedFinishDate == null ? null : expectedFinishDate.toString());
     row.put("expected_finish_time", expectedFinishTime);
+    row.put("company_codes", joinContextValues(processContexts, "company_codes"));
     row.put("workshop_codes", joinContextValues(processContexts, "workshop_codes"));
     row.put("line_codes", joinContextValues(processContexts, "line_codes"));
     row.put("process_codes", joinContextValues(processContexts, "process_code"));
@@ -5769,6 +6096,14 @@ public class MvpStoreService {
       allocationRow.put("orderNo", allocation.orderNo);
       allocationRow.put("productCode", allocation.productCode);
       allocationRow.put("processCode", allocation.processCode);
+      allocationRow.put("companyCode", allocation.companyCode);
+      allocationRow.put("company_code", allocation.companyCode);
+      allocationRow.put("workshopCode", allocation.workshopCode);
+      allocationRow.put("workshop_code", allocation.workshopCode);
+      allocationRow.put("lineCode", allocation.lineCode);
+      allocationRow.put("line_code", allocation.lineCode);
+      allocationRow.put("lineName", allocation.lineName);
+      allocationRow.put("line_name", allocation.lineName);
       allocationRow.put("dependencyType", allocation.dependencyType);
       allocationRow.put("shiftId", allocation.shiftId);
       allocationRow.put("date", allocation.date);
@@ -6075,6 +6410,18 @@ public class MvpStoreService {
     return null;
   }
 
+  private static String firstNonBlank(String... values) {
+    if (values == null) {
+      return "";
+    }
+    for (String value : values) {
+      if (value != null && !value.isBlank()) {
+        return value;
+      }
+    }
+    return "";
+  }
+
   private static String productNameCn(String productCode) {
     return PRODUCT_NAME_CN.getOrDefault(productCode, productCode == null ? "" : productCode);
   }
@@ -6249,6 +6596,14 @@ public class MvpStoreService {
     return SEVERITY_NAME_CN.getOrDefault(severity, severity == null ? "" : severity);
   }
 
+  private String companyCodeForProcess(String processCode) {
+    List<MvpDomain.LineProcessBinding> bindings = lineBindingsForProcess(processCode, true);
+    if (!bindings.isEmpty()) {
+      return normalizeCompanyCode(bindings.get(0).companyCode);
+    }
+    return normalizeCompanyCode(defaultLineBindingForProcess(processCode).companyCode);
+  }
+
   private String workshopCodeForProcess(String processCode) {
     List<MvpDomain.LineProcessBinding> bindings = lineBindingsForProcess(processCode, true);
     if (!bindings.isEmpty()) {
@@ -6308,6 +6663,35 @@ public class MvpStoreService {
     return String.join(",", workshopCodes);
   }
 
+  private String companyCodesForProcessSummary(String processCode) {
+    List<MvpDomain.LineProcessBinding> bindings = lineBindingsForProcess(processCode, true);
+    if (bindings.isEmpty()) {
+      return normalizeCompanyCode(defaultLineBindingForProcess(processCode).companyCode);
+    }
+    List<String> companyCodes = new ArrayList<>();
+    for (MvpDomain.LineProcessBinding binding : bindings) {
+      String companyCode = normalizeCompanyCode(binding.companyCode);
+      if (!companyCode.isBlank() && !companyCodes.contains(companyCode)) {
+        companyCodes.add(companyCode);
+      }
+    }
+    return String.join(",", companyCodes);
+  }
+
+  private String companyCodesSummaryAll() {
+    List<String> companyCodes = new ArrayList<>();
+    for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
+      String companyCode = normalizeCompanyCode(binding.companyCode);
+      if (!companyCode.isBlank() && !companyCodes.contains(companyCode)) {
+        companyCodes.add(companyCode);
+      }
+    }
+    if (companyCodes.isEmpty()) {
+      companyCodes.add(DEFAULT_COMPANY_CODE);
+    }
+    return String.join(",", companyCodes);
+  }
+
   private String workshopCodesSummaryAll() {
     List<String> workshops = new ArrayList<>();
     for (MvpDomain.LineProcessBinding binding : state.lineProcessBindings) {
@@ -6337,26 +6721,35 @@ public class MvpStoreService {
       if (enabledOnly && !binding.enabled) {
         continue;
       }
+      String companyCode = normalizeCompanyCode(binding.companyCode);
       String workshopCode = normalizeCode(binding.workshopCode);
       String lineCode = normalizeCode(binding.lineCode);
       if (workshopCode.isBlank() || lineCode.isBlank()) {
         continue;
       }
-      String key = workshopCode + "#" + lineCode + "#" + bindingProcessCode;
+      String key = companyCode + "#" + workshopCode + "#" + lineCode + "#" + bindingProcessCode;
       if (!dedupe.add(key)) {
         continue;
       }
       out.add(
         new MvpDomain.LineProcessBinding(
+          companyCode,
           workshopCode,
           lineCode,
           binding.lineName == null || binding.lineName.isBlank() ? lineCode : binding.lineName.trim(),
           bindingProcessCode,
-          binding.enabled
+          binding.enabled,
+          binding.capacityPerShift,
+          binding.requiredWorkers,
+          binding.requiredMachines
         )
       );
     }
     out.sort((a, b) -> {
+      int byCompany = normalizeCompanyCode(a.companyCode).compareTo(normalizeCompanyCode(b.companyCode));
+      if (byCompany != 0) {
+        return byCompany;
+      }
       int byWorkshop = normalizeCode(a.workshopCode).compareTo(normalizeCode(b.workshopCode));
       if (byWorkshop != 0) {
         return byWorkshop;
@@ -6377,7 +6770,21 @@ public class MvpStoreService {
       case "PROC_STERILE" -> "LINE-STERILE";
       default -> "LINE-MIXED";
     };
-    return new MvpDomain.LineProcessBinding(workshopCode, lineCode, lineCode, normalized, true);
+    MvpDomain.ProcessConfig processConfig = processConfigByCode(normalized);
+    double capacityPerShift = processConfig == null ? 1d : Math.max(1d, processConfig.capacityPerShift);
+    int requiredWorkers = processConfig == null ? 1 : Math.max(1, processConfig.requiredWorkers);
+    int requiredMachines = processConfig == null ? 1 : Math.max(1, processConfig.requiredMachines);
+    return new MvpDomain.LineProcessBinding(
+      DEFAULT_COMPANY_CODE,
+      workshopCode,
+      lineCode,
+      lineCode,
+      normalized,
+      true,
+      capacityPerShift,
+      requiredWorkers,
+      requiredMachines
+    );
   }
 
   private static String routeNameCn(String routeNo) {
@@ -7225,6 +7632,34 @@ public class MvpStoreService {
     return false;
   }
 
+  private static double orderTotalQty(MvpDomain.Order order) {
+    if (order == null || order.items == null || order.items.isEmpty()) {
+      return 0d;
+    }
+    double total = 0d;
+    for (MvpDomain.OrderItem item : order.items) {
+      if (item == null) {
+        continue;
+      }
+      total += Math.max(0d, item.qty);
+    }
+    return total;
+  }
+
+  private static double orderRemainingQty(MvpDomain.Order order) {
+    if (order == null || order.items == null || order.items.isEmpty()) {
+      return 0d;
+    }
+    double total = 0d;
+    for (MvpDomain.OrderItem item : order.items) {
+      if (item == null) {
+        continue;
+      }
+      total += Math.max(0d, item.qty - item.completedQty);
+    }
+    return total;
+  }
+
   private static boolean isOrderDone(MvpDomain.Order order) {
     for (MvpDomain.OrderItem item : order.items) {
       if (item.completedQty + 1e-9 < item.qty) {
@@ -7317,10 +7752,17 @@ public class MvpStoreService {
       .map(row -> new MvpDomain.MaterialRow(row.date, row.shiftCode, row.productCode, row.processCode, row.availableQty))
       .toList());
     target.lineProcessBindings = new ArrayList<>(source.lineProcessBindings.stream()
-      .map(row -> new MvpDomain.LineProcessBinding(row.workshopCode, row.lineCode, row.lineName, row.processCode, row.enabled))
-      .toList());
-    target.sectionLeaderBindings = new ArrayList<>(source.sectionLeaderBindings.stream()
-      .map(row -> new MvpDomain.SectionLeaderBinding(row.leaderId, row.leaderName, row.lineCode, row.active))
+      .map(row -> new MvpDomain.LineProcessBinding(
+        normalizeCompanyCode(row.companyCode),
+        row.workshopCode,
+        row.lineCode,
+        row.lineName,
+        row.processCode,
+        row.enabled,
+        row.capacityPerShift,
+        row.requiredWorkers,
+        row.requiredMachines
+      ))
       .toList());
 
     target.orders = new ArrayList<>(source.orders.stream().map(this::deepCopyOrder).toList());
@@ -7394,6 +7836,10 @@ public class MvpStoreService {
       row.orderNo = allocation.orderNo;
       row.productCode = allocation.productCode;
       row.processCode = allocation.processCode;
+      row.companyCode = allocation.companyCode;
+      row.workshopCode = allocation.workshopCode;
+      row.lineCode = allocation.lineCode;
+      row.lineName = allocation.lineName;
       row.dependencyType = allocation.dependencyType;
       row.shiftId = allocation.shiftId;
       row.date = allocation.date;
@@ -7545,6 +7991,11 @@ public class MvpStoreService {
     return value == null ? "" : value.trim().toUpperCase();
   }
 
+  private static String normalizeCompanyCode(String value) {
+    String normalized = normalizeCode(value);
+    return normalized.isBlank() ? DEFAULT_COMPANY_CODE : normalized;
+  }
+
   private static String normalizeMaterialCode(String value) {
     return normalizeCode(value);
   }
@@ -7624,8 +8075,60 @@ public class MvpStoreService {
     return Math.round(value * 100d) / 100d;
   }
 
+  private static double round3(double value) {
+    return Math.round(value * 1000d) / 1000d;
+  }
+
   private static long elapsedMillis(long startNanos) {
     return Math.max(0L, (System.nanoTime() - startNanos) / 1_000_000L);
+  }
+
+  private static final class OrderMaterialConstraintSnapshot {
+    List<Map<String, Object>> rows;
+    Map<String, OrderMaterialConstraint> constraintByOrderNo;
+
+    OrderMaterialConstraintSnapshot(
+      List<Map<String, Object>> rows,
+      Map<String, OrderMaterialConstraint> constraintByOrderNo
+    ) {
+      this.rows = rows == null ? List.of() : rows;
+      this.constraintByOrderNo = constraintByOrderNo == null ? Map.of() : constraintByOrderNo;
+    }
+  }
+
+  private static final class OrderMaterialConstraint {
+    double maxSchedulableQty;
+    String dataStatus;
+    String firstProcessCode;
+  }
+
+  private static final class MaterialDemandRow {
+    String materialCode;
+    String materialNameCn;
+    double requiredQty;
+    double demandQty;
+  }
+
+  private static final class MaterialUnionAggregate {
+    String materialCode;
+    String materialNameCn;
+    double demandQty;
+    double stockQty;
+    boolean stockAssigned;
+    boolean inventoryMissing;
+    Set<String> orderNos = new HashSet<>();
+  }
+
+  private static final class OrderMaterialWorkRow {
+    String orderNo;
+    String orderStatus;
+    String productCode;
+    String productNameCn;
+    String firstProcessCode;
+    String firstProcessNameCn;
+    double totalOrderQty;
+    double remainingOrderQty;
+    List<MaterialDemandRow> materialRows = new ArrayList<>();
   }
 
   private static final class CachedOrderPoolMaterials {
