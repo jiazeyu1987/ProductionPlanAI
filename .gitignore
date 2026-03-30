@@ -12,6 +12,11 @@ code/frontend/dist/
 media/
 tools/
 *.tar.gz
+*.tar
+*.err
+.deploy_*.txt
+out_*/
+db/*.snapshot.json
 
 # OS/editor noise
 .DS_Store

@@ -1,26 +1,36 @@
 package com.autoproduction.mvp.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.autoproduction.mvp.module.platform.ApiErrorResponseBuilder;
+import com.autoproduction.mvp.module.platform.ContractRouteAuthService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 @Component
 public class ContractAuthFilter extends OncePerRequestFilter {
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final ObjectMapper objectMapper;
+  private final ApiErrorResponseBuilder apiErrorResponseBuilder;
+  private final ContractRouteAuthService contractRouteAuthService;
+
+  public ContractAuthFilter(
+    ObjectMapper objectMapper,
+    ApiErrorResponseBuilder apiErrorResponseBuilder,
+    ContractRouteAuthService contractRouteAuthService
+  ) {
+    this.objectMapper = objectMapper;
+    this.apiErrorResponseBuilder = apiErrorResponseBuilder;
+    this.contractRouteAuthService = contractRouteAuthService;
+  }
 
   @Override
   protected boolean shouldNotFilter(HttpServletRequest request) {
-    if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
-      return true;
-    }
-    return !ApiSupport.isContractRoute(request.getRequestURI());
+    return !contractRouteAuthService.shouldAuthenticate(request.getMethod(), request.getRequestURI());
   }
 
   @Override
@@ -30,7 +40,7 @@ public class ContractAuthFilter extends OncePerRequestFilter {
     FilterChain filterChain
   ) throws ServletException, IOException {
     String auth = request.getHeader("Authorization");
-    if (auth != null && auth.startsWith("Bearer ")) {
+    if (contractRouteAuthService.hasValidBearerToken(auth)) {
       filterChain.doFilter(request, response);
       return;
     }
@@ -40,12 +50,13 @@ public class ContractAuthFilter extends OncePerRequestFilter {
     response.setHeader("x-request-id", requestId);
     response.setContentType("application/json");
 
-    Map<String, Object> body = new LinkedHashMap<>();
-    body.put("request_id", requestId);
-    body.put("code", "UNAUTHORIZED");
-    body.put("message", "Bearer token is required.");
-    body.put("retryable", false);
-    body.put("timestamp", ApiSupport.now());
+    Map<String, Object> body = apiErrorResponseBuilder.buildBody(
+      request.getRequestURI(),
+      requestId,
+      "UNAUTHORIZED",
+      "Bearer token is required.",
+      false
+    );
     objectMapper.writeValue(response.getWriter(), body);
   }
 }

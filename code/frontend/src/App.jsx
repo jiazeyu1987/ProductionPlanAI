@@ -10,9 +10,11 @@ import OpsIntegrationPage from "./pages/OpsIntegrationPage";
 import OrdersPoolPage from "./pages/OrdersPoolPage";
 import PlanReportsPage from "./pages/PlanReportsPage";
 import ScheduleBoardPage from "./pages/ScheduleBoardPage";
+import ScheduleCalendarPage from "./pages/ScheduleCalendarPage";
 import ScheduleVersionsPage from "./pages/ScheduleVersionsPage";
 import SimulationPage from "./pages/SimulationPage";
 import LiteSchedulerPage from "./pages/LiteSchedulerPage";
+import TestToolsPage from "./pages/TestToolsPage";
 
 const links = [
   ["/dashboard", "看板"],
@@ -28,7 +30,9 @@ const links = [
   ["/ops/integration", "同步监控"],
   ["/simulation", "仿真"],
   ["/guide", "说明页"],
-  ["/schedule/lite", "璞慧排产"]
+  ["/schedule/lite", "璞慧排产"],
+  ["/schedule/calendar", "月历排期"],
+  ["/test", "测试"]
 ];
 
 export default function App() {
@@ -52,6 +56,7 @@ export default function App() {
           <Route path="/orders/pool" element={<OrdersPoolPage />} />
           <Route path="/schedule/board" element={<ScheduleBoardPage />} />
           <Route path="/schedule/lite" element={<LiteSchedulerPage />} />
+          <Route path="/schedule/calendar" element={<ScheduleCalendarPage />} />
           <Route path="/reports/plans" element={<PlanReportsPage />} />
           <Route path="/schedule/versions" element={<ScheduleVersionsPage />} />
           <Route path="/dispatch/commands" element={<DispatchCommandsPage />} />
@@ -62,6 +67,7 @@ export default function App() {
           <Route path="/ops/integration" element={<OpsIntegrationPage />} />
           <Route path="/simulation" element={<SimulationPage />} />
           <Route path="/guide" element={<GuidePage />} />
+          <Route path="/test" element={<TestToolsPage />} />
         </Routes>
       </main>
     </div>

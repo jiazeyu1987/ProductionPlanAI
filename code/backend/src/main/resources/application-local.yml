@@ -15,3 +15,13 @@ management:
     web:
       exposure:
         include: health,info
+
+mvp:
+  erp:
+    base-url: ${ERP_BASE_URL:}
+    acct-id: ${ERP_ACCT_ID:}
+    username: ${ERP_USERNAME:}
+    password: ${ERP_PASSWORD:}
+    lcid: ${ERP_LCID:2052}
+    timeout: ${ERP_TIMEOUT:30}
+    verify-ssl: ${ERP_VERIFY_SSL:false}

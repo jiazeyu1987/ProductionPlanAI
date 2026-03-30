@@ -1,0 +1,402 @@
+﻿.lite-file-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.lite-file-label:hover {
+  border-color: var(--accent);
+}
+
+.lite-file-label input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.lite-warning {
+  margin-top: 12px;
+  border-color: #efd8aa;
+  background: #fff9ee;
+}
+
+.lite-warning-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.lite-timeline-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lite-timeline-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.lite-timeline-table th,
+.lite-timeline-table td {
+  border-right: 1px solid #e4ebe6;
+  border-bottom: 1px solid #e4ebe6;
+  vertical-align: top;
+  min-width: 92px;
+  padding: 6px 8px;
+}
+
+.lite-timeline-table th {
+  background: #edf4ef;
+}
+
+.lite-timeline-table th:first-child,
+.lite-timeline-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 160px;
+  background: #f6faf7;
+}
+
+.lite-cell-cap {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.lite-chip-list {
+  display: grid;
+  gap: 4px;
+}
+
+.lite-chip {
+  display: inline-block;
+  border: 1px solid #cad7cf;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: #f1f6f2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+  font-size: 0.74rem;
+}
+
+.lite-chip-locked {
+  background: #fff0df;
+  border-color: #f0c892;
+}
+
+.lite-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: #10201866;
+}
+
+.lite-modal {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+}
+
+.lite-sub-title {
+  margin: 8px 0;
+}
+
+.lite-allocation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.lite-allocation-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lite-allocation-row select,
+.lite-allocation-row input {
+  min-width: 140px;
+}
+
+.lite-line-name {
+  min-width: 180px;
+  font-weight: 600;
+}
+
+.lite-calendar-wrap {
+  margin-top: 10px;
+}
+
+.lite-calendar-head {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.lite-calendar-weekday {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.lite-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.lite-calendar-cell {
+  min-height: 78px;
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.lite-calendar-cell-empty {
+  border-style: dashed;
+  background: #f8fbf9;
+}
+
+.lite-calendar-cell-out {
+  background: #f6f8f7;
+}
+
+.lite-calendar-cell-holiday {
+  border-color: #efc68d;
+  background: #fff8ee;
+}
+
+.lite-calendar-cell-rest {
+  border-color: #b9c1ca;
+  background: #f3f5f7;
+}
+
+.lite-calendar-cell-selected {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+}
+
+.lite-calendar-cell-rest.lite-calendar-cell-selected {
+  border-color: #b9c1ca;
+  box-shadow: inset 0 0 0 1px #b9c1ca;
+  background: #f3f5f7;
+}
+
+.lite-calendar-date {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lite-holiday-tag {
+  display: inline-block;
+  margin-bottom: 4px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #8e5300;
+  background: #ffe7c5;
+}
+
+.lite-cal-summary {
+  display: grid;
+  gap: 2px;
+}
+
+.lite-cal-summary span {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.lite-cal-summary strong {
+  font-size: 0.78rem;
+}
+
+.lite-cal-line-list {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.lite-cal-mode-actions {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.lite-cal-mode-btn {
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+}
+
+.lite-cal-mode-btn-rest {
+  color: #b32020;
+}
+
+.lite-cal-mode-btn-work {
+  color: #0f6e4f;
+}
+
+.lite-cal-line-item {
+  border-top: 1px dashed #dbe6de;
+  padding-top: 4px;
+}
+
+.lite-cal-line-name {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #234236;
+}
+
+.lite-cal-line-orders {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.lite-cal-order-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  margin: 2px 0;
+  padding: 3px 4px;
+  border: 1px dashed #c9ddd0;
+  border-radius: 6px;
+  background: #f7fbf8;
+  text-align: left;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #244738;
+}
+
+.lite-cal-order-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 2px 0;
+  padding: 3px 4px;
+  border: 1px dashed #c9ddd0;
+  border-radius: 6px;
+  background: #f7fbf8;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: #244738;
+}
+
+.lite-cal-order-main {
+  display: block;
+  font-weight: 600;
+}
+
+.lite-cal-order-meta {
+  display: block;
+  font-size: 0.62rem;
+  color: #4f6d60;
+  line-height: 1.25;
+}
+
+.lite-cal-task-border-0 {
+  background: #eaf3ff;
+  border-color: #bdd2f3;
+  color: #1f3556;
+}
+
+.lite-cal-task-border-1 {
+  background: #e7f8f1;
+  border-color: #b6e2cd;
+  color: #1d4a3a;
+}
+
+.lite-cal-task-border-2 {
+  background: #fff4e6;
+  border-color: #f1d4ab;
+  color: #5a3a15;
+}
+
+.lite-cal-task-border-3 {
+  background: #fdeef6;
+  border-color: #efc4dc;
+  color: #573048;
+}
+
+.lite-cal-task-border-4 {
+  background: #f1efff;
+  border-color: #d2cbf4;
+  color: #3b3569;
+}
+
+.lite-cal-task-border-5 {
+  background: #e9f7f9;
+  border-color: #b7dde2;
+  color: #1f4348;
+}
+
+.lite-day-list {
+  display: grid;
+  gap: 10px;
+}
+
+.lite-day-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbf9;
+  padding: 10px;
+}
+
+.lite-day-header {
+  margin-bottom: 8px;
+}
+
+.lite-day-lines {
+  display: grid;
+  gap: 8px;
+}
+
+.lite-day-line {
+  display: grid;
+  grid-template-columns: minmax(96px, 130px) minmax(0, 1fr);
+  gap: 8px;
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+
+.lite-day-line-name {
+  font-weight: 600;
+  color: #234236;
+}
+

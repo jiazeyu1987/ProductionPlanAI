@@ -1,23 +1,29 @@
 package com.autoproduction.mvp.api;
 
 import com.autoproduction.mvp.core.MvpServiceException;
+import com.autoproduction.mvp.module.platform.ApiErrorResponseBuilder;
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+  private final ApiErrorResponseBuilder apiErrorResponseBuilder;
+
+  public GlobalExceptionHandler(ApiErrorResponseBuilder apiErrorResponseBuilder) {
+    this.apiErrorResponseBuilder = apiErrorResponseBuilder;
+  }
 
   @ExceptionHandler(MvpServiceException.class)
   public ResponseEntity<Map<String, Object>> handleKnown(MvpServiceException error, HttpServletRequest request) {
     String requestId = ApiSupport.getOrCreateRequestId(request, null);
-    return buildError(
-      request.getRequestURI(),
+    return apiErrorResponseBuilder.buildResponse(
       HttpStatus.valueOf(error.getStatusCode()),
+      request.getRequestURI(),
       requestId,
       error.getCode(),
       error.getMessage(),
@@ -25,44 +31,29 @@ public class GlobalExceptionHandler {
     );
   }
 
+  @ExceptionHandler(NoResourceFoundException.class)
+  public ResponseEntity<Map<String, Object>> handleNoResource(NoResourceFoundException error, HttpServletRequest request) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    return apiErrorResponseBuilder.buildResponse(
+      HttpStatus.NOT_FOUND,
+      request.getRequestURI(),
+      requestId,
+      "NOT_FOUND",
+      "Not found: %s.".formatted(request.getRequestURI()),
+      false
+    );
+  }
+
   @ExceptionHandler(Exception.class)
   public ResponseEntity<Map<String, Object>> handleUnknown(Exception error, HttpServletRequest request) {
     String requestId = ApiSupport.getOrCreateRequestId(request, null);
-    return buildError(
-      request.getRequestURI(),
+    return apiErrorResponseBuilder.buildResponse(
       HttpStatus.INTERNAL_SERVER_ERROR,
+      request.getRequestURI(),
       requestId,
       "INTERNAL_ERROR",
       error.getMessage() == null ? "Unknown error." : error.getMessage(),
       false
     );
-  }
-
-  private ResponseEntity<Map<String, Object>> buildError(
-    String path,
-    HttpStatus status,
-    String requestId,
-    String code,
-    String message,
-    boolean retryable
-  ) {
-    if (ApiSupport.isContractRoute(path)) {
-      Map<String, Object> body = new LinkedHashMap<>();
-      body.put("request_id", requestId);
-      body.put("code", code);
-      body.put("message", message);
-      body.put("retryable", retryable);
-      body.put("timestamp", ApiSupport.now());
-      return ApiSupport.json(status, requestId, body);
-    }
-
-    Map<String, Object> inner = new LinkedHashMap<>();
-    inner.put("request_id", requestId);
-    inner.put("code", code);
-    inner.put("message", message);
-
-    Map<String, Object> body = new LinkedHashMap<>();
-    body.put("error", inner);
-    return ApiSupport.json(status, requestId, body);
   }
 }

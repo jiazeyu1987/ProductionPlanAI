@@ -2,10 +2,71 @@ package com.autoproduction.mvp.core;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 final class SeedDataFactory {
+
+  private static final String PROD_ANGIO_CATH = "PROD_ANGIO_CATH";
+  private static final String PROD_YXN_067_005_1006 = "YXN.067.005.1006";
+  private static final String PROD_A006_034_10191 = "A006.034.10191";
+  private static final String PROD_YXN_009_020_1047 = "YXN.009.020.1047";
+  private static final String PROD_YXN_044_02_1028 = "YXN.044.02.1028";
+
+  private static final List<String> ANGIO_CATH_PROCESS_CODES = List.of(
+    "Z470",
+    "Z3910",
+    "Z3920",
+    "Z390",
+    "Z340",
+    "Z410",
+    "Z460",
+    "Z420",
+    "Z320",
+    "Z310",
+    "Z350",
+    "Z480",
+    "Z370",
+    "Z380",
+    "Z290",
+    "Z450",
+    "Z360",
+    "Z270",
+    "Z4830",
+    "Z500",
+    "W130",
+    "W140",
+    "W160",
+    "W150",
+    "W030"
+  );
+  private static final List<String> YXN_067_005_1006_PROCESS_CODES = List.of(
+    "W150",
+    "W160",
+    "W130",
+    "W140",
+    "W030"
+  );
+  private static final List<String> A006_034_10191_PROCESS_CODES = List.of(
+    "W160",
+    "W030"
+  );
+  private static final List<String> YXN_009_020_1047_PROCESS_CODES = List.of(
+    "W030",
+    "W130",
+    "W140",
+    "W150",
+    "W160"
+  );
+  private static final List<String> YXN_044_02_1028_PROCESS_CODES = List.of(
+    "W130",
+    "W140",
+    "W160",
+    "W150",
+    "W030"
+  );
 
   private SeedDataFactory() {}
 
@@ -15,122 +76,198 @@ final class SeedDataFactory {
     state.horizonDays = 4;
     state.shiftsPerDay = 2;
     state.shiftHours = 12;
+    state.skipStatutoryHolidays = false;
+    state.weekendRestMode = "DOUBLE";
+    state.dateShiftModeByDate = new HashMap<>();
     state.strictRoute = true;
 
-    state.processes = List.of(
-      new MvpDomain.ProcessConfig("PROC_TUBE", 1000d, 2, 1),
-      new MvpDomain.ProcessConfig("PROC_ASSEMBLY", 900d, 2, 1),
-      new MvpDomain.ProcessConfig("PROC_BALLOON", 850d, 2, 1),
-      new MvpDomain.ProcessConfig("PROC_STENT", 700d, 3, 1),
-      new MvpDomain.ProcessConfig("PROC_STERILE", 1200d, 1, 1)
-    );
+    List<MvpDomain.ProcessConfig> processConfigs = new ArrayList<>();
+    processConfigs.add(new MvpDomain.ProcessConfig("PROC_TUBE", 1000d, 2, 1));
+    processConfigs.add(new MvpDomain.ProcessConfig("PROC_ASSEMBLY", 900d, 2, 1));
+    processConfigs.add(new MvpDomain.ProcessConfig("PROC_BALLOON", 850d, 2, 1));
+    processConfigs.add(new MvpDomain.ProcessConfig("PROC_STENT", 700d, 3, 1));
+    processConfigs.add(new MvpDomain.ProcessConfig("PROC_STERILE", 1200d, 1, 1));
+    processConfigs.addAll(buildAngioCathProcessConfigs());
+    state.processes = processConfigs;
 
-    state.processRoutes = Map.of(
-      "PROD_CATH", List.of(
-        new MvpDomain.ProcessStep("PROC_TUBE", "FS"),
-        new MvpDomain.ProcessStep("PROC_ASSEMBLY", "FS"),
-        new MvpDomain.ProcessStep("PROC_STERILE", "FS")
-      ),
-      "PROD_BALLOON", List.of(
-        new MvpDomain.ProcessStep("PROC_BALLOON", "FS"),
-        new MvpDomain.ProcessStep("PROC_ASSEMBLY", "FS"),
-        new MvpDomain.ProcessStep("PROC_STERILE", "FS")
-      ),
-      "PROD_STENT", List.of(
-        new MvpDomain.ProcessStep("PROC_STENT", "FS"),
-        new MvpDomain.ProcessStep("PROC_STERILE", "FS")
-      )
-    );
+    state.processRoutes = buildDefaultProcessRoutes();
 
     state.lineProcessBindings = List.of(
-      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_TUBE", true),
-      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_ASSEMBLY", true),
-      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_BALLOON", true),
-      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_ASSEMBLY", true),
-      new MvpDomain.LineProcessBinding("WS-PRODUCTION", "LINE-STENT-1", "支架一线", "PROC_STENT", true),
-      new MvpDomain.LineProcessBinding("WS-STERILE", "LINE-STERILE-1", "灭菌一线", "PROC_STERILE", true)
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_TUBE", true, 1000d, 2, 1),
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-PRODUCTION", "LINE-CATH-1", "导管一线", "PROC_ASSEMBLY", true, 900d, 2, 1),
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_BALLOON", true, 850d, 2, 1),
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-PRODUCTION", "LINE-BALLOON-1", "球囊一线", "PROC_ASSEMBLY", true, 900d, 2, 1),
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-PRODUCTION", "LINE-STENT-1", "支架一线", "PROC_STENT", true, 700d, 3, 1),
+      new MvpDomain.LineProcessBinding("COMPANY-MAIN", "WS-STERILE", "LINE-STERILE-1", "灭菌一线", "PROC_STERILE", true, 1200d, 1, 1)
     );
-    state.sectionLeaderBindings = List.of(
-      new MvpDomain.SectionLeaderBinding("LEADER-01", "张工", "LINE-CATH-1", true),
-      new MvpDomain.SectionLeaderBinding("LEADER-01", "张工", "LINE-BALLOON-1", true),
-      new MvpDomain.SectionLeaderBinding("LEADER-02", "李工", "LINE-STENT-1", true),
-      new MvpDomain.SectionLeaderBinding("LEADER-03", "王工", "LINE-STERILE-1", true)
-    );
-
     state.shiftCalendar = buildShiftCalendar(state.startDate, state.horizonDays, state.shiftsPerDay);
-    state.workerPools = buildResource(state.startDate, state.horizonDays, state.shiftsPerDay, Map.of(
-      "PROC_TUBE", 8, "PROC_ASSEMBLY", 10, "PROC_BALLOON", 8, "PROC_STENT", 9, "PROC_STERILE", 6
-    ));
-    state.machinePools = buildResource(state.startDate, state.horizonDays, state.shiftsPerDay, Map.of(
-      "PROC_TUBE", 3, "PROC_ASSEMBLY", 3, "PROC_BALLOON", 2, "PROC_STENT", 2, "PROC_STERILE", 2
-    ));
+    state.workerPools = buildResource(
+      state.startDate,
+      state.horizonDays,
+      state.shiftsPerDay,
+      buildDefaultResourceValues(
+        state.processes,
+        Map.of(
+          "PROC_TUBE", 8,
+          "PROC_ASSEMBLY", 10,
+          "PROC_BALLOON", 8,
+          "PROC_STENT", 9,
+          "PROC_STERILE", 6
+        ),
+        6
+      )
+    );
+    state.machinePools = buildResource(
+      state.startDate,
+      state.horizonDays,
+      state.shiftsPerDay,
+      buildDefaultResourceValues(
+        state.processes,
+        Map.of(
+          "PROC_TUBE", 3,
+          "PROC_ASSEMBLY", 3,
+          "PROC_BALLOON", 2,
+          "PROC_STENT", 2,
+          "PROC_STERILE", 2
+        ),
+        2
+      )
+    );
     state.materialAvailability = buildMaterials(state.startDate, state.horizonDays, state.shiftsPerDay);
 
     state.orders = new ArrayList<>();
     state.orders.add(new MvpDomain.Order(
-      "MO-CATH-001", "production", LocalDate.of(2026, 3, 24),
+      "MO-CATH-001",
+      "production",
+      LocalDate.of(2026, 3, 24),
       state.startDate,
-      true, false, false, "OPEN",
+      true,
+      false,
+      false,
+      "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_CATH", 300d, 0d)),
       createBusinessData(
         LocalDate.of(2026, 3, 22),
         LocalDate.of(2026, 3, 24),
-        "内贸备货",
-        "导管",
+        "鍐呰锤澶囪揣",
+        "瀵肩",
         "5F COBRA2 100cm",
         "K2026032201",
         "纸塑袋",
         "YXN.039.002.1002",
         "3.24",
         "周计划（3.16-3.22）",
-        "MVP基准样例",
+        "MVP鍩哄噯鏍蜂緥",
         300d,
         "SF-CATH-001"
       )
     ));
     state.orders.add(new MvpDomain.Order(
-      "MO-BALLOON-001", "production", LocalDate.of(2026, 3, 25),
+      "MO-BALLOON-001",
+      "production",
+      LocalDate.of(2026, 3, 25),
       state.startDate,
-      false, false, false, "OPEN",
+      false,
+      false,
+      false,
+      "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_BALLOON", 1000d, 0d)),
       createBusinessData(
         LocalDate.of(2026, 3, 22),
         LocalDate.of(2026, 3, 25),
-        "内贸备货",
-        "球囊",
+        "鍐呰锤澶囪揣",
+        "鐞冨泭",
         "S020015-4 2.0mmx15mm",
         "K2026032202",
         "纸塑袋",
         "YXN.037.011.1007",
         "3.25",
         "周计划（3.16-3.22）",
-        "MVP基准样例",
+        "MVP鍩哄噯鏍蜂緥",
         1000d,
         "SF-BALLOON-001"
       )
     ));
     state.orders.add(new MvpDomain.Order(
-      "MO-STENT-001", "production", LocalDate.of(2026, 3, 26),
+      "MO-STENT-001",
+      "production",
+      LocalDate.of(2026, 3, 26),
       state.startDate,
-      false, false, false, "OPEN",
+      false,
+      false,
+      false,
+      "OPEN",
       List.of(new MvpDomain.OrderItem("PROD_STENT", 2000d, 0d)),
       createBusinessData(
         LocalDate.of(2026, 3, 22),
         LocalDate.of(2026, 3, 26),
         "研发型检样品单",
-        "支架",
+        "鏀灦",
         "SC50040140 5.0mmx40mm",
         "K2026032203",
         "硬吸塑",
         "YXN.074.002.5001",
         "3.26",
         "周计划（3.16-3.22）",
-        "优先排产",
+        "浼樺厛鎺掍骇",
         2000d,
         "SF-STENT-001"
       )
     ));
     return state;
+  }
+
+  private static List<MvpDomain.ProcessConfig> buildAngioCathProcessConfigs() {
+    List<MvpDomain.ProcessConfig> rows = new ArrayList<>();
+    for (String processCode : ANGIO_CATH_PROCESS_CODES) {
+      double capacityPerShift = processCode.startsWith("W") ? 1200d : 900d;
+      rows.add(new MvpDomain.ProcessConfig(processCode, capacityPerShift, 1, 1));
+    }
+    return rows;
+  }
+
+  private static Map<String, List<MvpDomain.ProcessStep>> buildDefaultProcessRoutes() {
+    Map<String, List<MvpDomain.ProcessStep>> routes = new LinkedHashMap<>();
+    routes.put("PROD_CATH", List.of(
+      new MvpDomain.ProcessStep("PROC_TUBE", "FS"),
+      new MvpDomain.ProcessStep("PROC_ASSEMBLY", "FS"),
+      new MvpDomain.ProcessStep("PROC_STERILE", "FS")
+    ));
+    routes.put("PROD_BALLOON", List.of(
+      new MvpDomain.ProcessStep("PROC_BALLOON", "FS"),
+      new MvpDomain.ProcessStep("PROC_ASSEMBLY", "FS"),
+      new MvpDomain.ProcessStep("PROC_STERILE", "FS")
+    ));
+    routes.put("PROD_STENT", List.of(
+      new MvpDomain.ProcessStep("PROC_STENT", "FS"),
+      new MvpDomain.ProcessStep("PROC_STERILE", "FS")
+    ));
+    routes.put(PROD_ANGIO_CATH, buildFsRoute(ANGIO_CATH_PROCESS_CODES));
+    routes.put(PROD_YXN_067_005_1006, buildFsRoute(YXN_067_005_1006_PROCESS_CODES));
+    routes.put(PROD_A006_034_10191, buildFsRoute(A006_034_10191_PROCESS_CODES));
+    routes.put(PROD_YXN_009_020_1047, buildFsRoute(YXN_009_020_1047_PROCESS_CODES));
+    routes.put(PROD_YXN_044_02_1028, buildFsRoute(YXN_044_02_1028_PROCESS_CODES));
+    return routes;
+  }
+
+  private static List<MvpDomain.ProcessStep> buildFsRoute(List<String> processCodes) {
+    List<MvpDomain.ProcessStep> steps = new ArrayList<>();
+    for (String processCode : processCodes) {
+      steps.add(new MvpDomain.ProcessStep(processCode, "FS"));
+    }
+    return steps;
+  }
+
+  private static Map<String, Integer> buildDefaultResourceValues(
+    List<MvpDomain.ProcessConfig> processConfigs,
+    Map<String, Integer> preferred,
+    int fallback
+  ) {
+    Map<String, Integer> out = new LinkedHashMap<>(preferred);
+    for (MvpDomain.ProcessConfig config : processConfigs) {
+      out.putIfAbsent(config.processCode, fallback);
+    }
+    return out;
   }
 
   private static MvpDomain.OrderBusinessData createBusinessData(
@@ -217,7 +354,8 @@ final class SeedDataFactory {
     Map<String, List<String>> routes = Map.of(
       "PROD_CATH", List.of("PROC_TUBE", "PROC_ASSEMBLY", "PROC_STERILE"),
       "PROD_BALLOON", List.of("PROC_BALLOON", "PROC_ASSEMBLY", "PROC_STERILE"),
-      "PROD_STENT", List.of("PROC_STENT", "PROC_STERILE")
+      "PROD_STENT", List.of("PROC_STENT", "PROC_STERILE"),
+      PROD_ANGIO_CATH, ANGIO_CATH_PROCESS_CODES
     );
     for (int i = 0; i < horizonDays; i += 1) {
       LocalDate date = startDate.plusDays(i);
@@ -232,3 +370,5 @@ final class SeedDataFactory {
     return rows;
   }
 }
+
+

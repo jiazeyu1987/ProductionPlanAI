@@ -12,8 +12,23 @@ if (-not (Test-Path $scriptPath)) {
   throw "Stack script not found: $scriptPath"
 }
 
-powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $scriptPath `
-  -BackendPort $BackendPort `
-  -FrontendPort $FrontendPort `
-  -TimeoutSeconds $TimeoutSeconds `
-  -OpenBrowser:$OpenBrowser
+$argsList = @(
+  "-NoLogo",
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  $scriptPath,
+  "-BackendPort",
+  $BackendPort,
+  "-FrontendPort",
+  $FrontendPort,
+  "-TimeoutSeconds",
+  $TimeoutSeconds
+)
+
+if ($OpenBrowser.IsPresent) {
+  $argsList += "-OpenBrowser"
+}
+
+& powershell @argsList

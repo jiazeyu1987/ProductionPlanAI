@@ -1,6 +1,7 @@
 package com.autoproduction.mvp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -17,6 +18,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -35,7 +38,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+  "mvp.erp.use-real-orders=false",
+  "mvp.erp.refresh.enabled=false"
+})
 @AutoConfigureMockMvc
 class MvpApiTest {
   private static final DataFormatter DATA_FORMATTER = new DataFormatter();
@@ -71,6 +77,68 @@ class MvpApiTest {
       )
       .andExpect(status().isBadRequest())
       .andExpect(jsonPath("$.code").value("REQUEST_ID_REQUIRED"));
+  }
+
+  @Test
+  void internalListResponseSupportsRequestIdHeaderAndPagination() throws Exception {
+    String requestId = "req-test-list-page";
+    mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+          .header("x-request-id", requestId)
+          .param("page", "1")
+          .param("page_size", "1")
+      )
+      .andExpect(status().isOk())
+      .andExpect(header().string("x-request-id", requestId))
+      .andExpect(jsonPath("$.request_id").value(requestId))
+      .andExpect(jsonPath("$.page").value(1))
+      .andExpect(jsonPath("$.page_size").value(1))
+      .andExpect(jsonPath("$.items.length()").value(1));
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void publishUsesDefaultOperatorWhenMissingInPayload() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-default-op-generate")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    String publishRequestId = "req-test-default-op-publish";
+    mockMvc.perform(
+        post("/internal/v1/internal/schedule-versions/V001/publish")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", publishRequestId,
+            "reason", "publish without operator"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.success").value(true));
+
+    MvcResult auditResult = mockMvc.perform(
+        get("/internal/v1/internal/audit-logs")
+          .header("Authorization", "Bearer test")
+          .param("request_id", publishRequestId)
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+
+    Map<String, Object> auditBody = objectMapper.readValue(auditResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> items = (List<Map<String, Object>>) auditBody.get("items");
+    assertTrue(
+      items.stream().anyMatch(row ->
+        "PUBLISH_VERSION".equals(String.valueOf(row.get("action"))) &&
+        publishRequestId.equals(String.valueOf(row.get("request_id"))) &&
+        "publisher".equals(String.valueOf(row.get("operator")))
+      ),
+      "Expected publish audit row with default operator=publisher"
+    );
   }
 
   @Test
@@ -580,6 +648,100 @@ class MvpApiTest {
   }
 
   @Test
+  void simulationStateCurrentDateShouldAlignToToday() throws Exception {
+    String today = LocalDate.now(ZoneId.of("Asia/Shanghai")).toString();
+    mockMvc.perform(
+        get("/internal/v1/internal/simulation/state")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.current_sim_date").value(today));
+  }
+
+  @Test
+  void manualAdvanceDayUsesClientDateNextDayAsMinimumBusinessDate() throws Exception {
+    MvcResult initialStateResult = mockMvc.perform(
+        get("/internal/v1/internal/simulation/state")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> initialState = objectMapper.readValue(initialStateResult.getResponse().getContentAsString(), Map.class);
+    LocalDate currentSimDate = LocalDate.parse(String.valueOf(initialState.get("current_sim_date")));
+    String clientDate = currentSimDate.toString();
+    String expectedStartDate = currentSimDate.plusDays(1).toString();
+    String expectedNextCurrentDate = currentSimDate.plusDays(2).toString();
+
+    mockMvc.perform(
+        post("/internal/v1/internal/simulation/manual/advance-day")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-manual-client-date",
+            "client_date", clientDate
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.start_date").value(expectedStartDate))
+      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate));
+  }
+
+  @Test
+  void manualAdvanceDayAcceptsSlashClientDateFormat() throws Exception {
+    MvcResult initialStateResult = mockMvc.perform(
+        get("/internal/v1/internal/simulation/state")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> initialState = objectMapper.readValue(initialStateResult.getResponse().getContentAsString(), Map.class);
+    LocalDate currentSimDate = LocalDate.parse(String.valueOf(initialState.get("current_sim_date")));
+    LocalDate nextDayFromClientDate = LocalDate.of(2026, 3, 27);
+    LocalDate expectedStartDate = currentSimDate.isBefore(nextDayFromClientDate) ? nextDayFromClientDate : currentSimDate;
+    LocalDate expectedNextCurrentDate = expectedStartDate.plusDays(1);
+
+    mockMvc.perform(
+        post("/internal/v1/internal/simulation/manual/advance-day")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-manual-client-date-slash",
+            "client_date", "2026/3/26"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.start_date").value(expectedStartDate.toString()))
+      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate.toString()));
+  }
+
+  @Test
+  void manualAdvanceDayWithoutClientDateUsesServerDateNextDayAsMinimumBusinessDate() throws Exception {
+    MvcResult initialStateResult = mockMvc.perform(
+        get("/internal/v1/internal/simulation/state")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> initialState = objectMapper.readValue(initialStateResult.getResponse().getContentAsString(), Map.class);
+    LocalDate currentSimDate = LocalDate.parse(String.valueOf(initialState.get("current_sim_date")));
+    LocalDate nextDayFromServerDate = LocalDate.now().plusDays(1);
+    LocalDate expectedStartDate = currentSimDate.isBefore(nextDayFromServerDate) ? nextDayFromServerDate : currentSimDate;
+    LocalDate expectedNextCurrentDate = expectedStartDate.plusDays(1);
+
+    mockMvc.perform(
+        post("/internal/v1/internal/simulation/manual/advance-day")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-manual-server-date-fallback"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.start_date").value(expectedStartDate.toString()))
+      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate.toString()));
+  }
+
+  @Test
   void patchOrderRequiresRequestId() throws Exception {
     mockMvc.perform(
         patch("/api/orders/MO-CATH-001")
@@ -657,6 +819,38 @@ class MvpApiTest {
       )
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.scenario_name_cn").isNotEmpty());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void processRoutesContainAngioCathRouteInSeedData() throws Exception {
+    MvcResult result = mockMvc.perform(
+        get("/v1/mes/process-routes")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+
+    Map<String, Object> body = objectMapper.readValue(result.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> items = (List<Map<String, Object>>) body.get("items");
+
+    List<Map<String, Object>> angioRows = items.stream()
+      .filter(row -> "PROD_ANGIO_CATH".equals(String.valueOf(row.get("product_code"))))
+      .toList();
+
+    assertTrue(!angioRows.isEmpty(), "Expected seeded route rows for PROD_ANGIO_CATH");
+    assertTrue(
+      angioRows.stream().anyMatch(row -> "Z470".equals(String.valueOf(row.get("process_code")))),
+      "Expected process Z470 in angio cath route"
+    );
+    assertTrue(
+      angioRows.stream().anyMatch(row -> "W030".equals(String.valueOf(row.get("process_code")))),
+      "Expected process W030 in angio cath route"
+    );
+    assertTrue(
+      angioRows.stream().allMatch(row -> "造影导管".equals(String.valueOf(row.get("product_name_cn")))),
+      "Expected product_name_cn to be 造影导管 for angio cath rows"
+    );
   }
 
   @Test
@@ -1016,6 +1210,53 @@ class MvpApiTest {
   }
 
   @Test
+  void erpPurchaseOrdersEndpointIsAvailable() throws Exception {
+    mockMvc.perform(
+        get("/v1/erp/purchase-orders")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+  }
+
+  @Test
+  void internalErpRefreshEndpointSupportsManualTriggerAndStatusQuery() throws Exception {
+    mockMvc.perform(
+        post("/internal/v1/internal/integration/erp/refresh")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content("{}")
+      )
+      .andExpect(status().isBadRequest())
+      .andExpect(jsonPath("$.code").value("REQUEST_ID_REQUIRED"));
+
+    mockMvc.perform(
+        post("/internal/v1/internal/integration/erp/refresh")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-erp-manual-refresh",
+            "operator", "integration-admin",
+            "reason", "manual test"
+          )))
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.status").isString())
+      .andExpect(jsonPath("$.refresh_state").isMap())
+      .andExpect(jsonPath("$.data_counts").isMap());
+
+    mockMvc.perform(
+        get("/internal/v1/internal/integration/erp/refresh-status")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.module").value("ERP_DATA_MANAGER"))
+      .andExpect(jsonPath("$.erp_connection").isMap())
+      .andExpect(jsonPath("$.refresh_state").isMap())
+      .andExpect(jsonPath("$.data_counts").isMap());
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void masterdataConfigSupportsCreateAndDeleteForCrudTabs() throws Exception {
     MvcResult configResult = mockMvc.perform(
@@ -1027,6 +1268,10 @@ class MvpApiTest {
     Map<String, Object> configBody = objectMapper.readValue(configResult.getResponse().getContentAsString(), Map.class);
     List<Map<String, Object>> processRows = (List<Map<String, Object>>) configBody.get("process_configs");
     assertTrue(!processRows.isEmpty(), "process_configs should not be empty");
+    assertFalse(configBody.containsKey("resource_pool"), "resource_pool should be removed from masterdata/config");
+    assertFalse(configBody.containsKey("section_leader_bindings"), "section_leader_bindings should be removed from masterdata/config");
+    assertFalse(configBody.containsKey("horizon_start_date"), "horizon_start_date should be moved to schedule-calendar/rules");
+    assertFalse(configBody.containsKey("skip_statutory_holidays"), "skip_statutory_holidays should be moved to schedule-calendar/rules");
 
     Map<String, Object> keepProcess = processRows.get(0);
     String keepProcessCode = String.valueOf(keepProcess.get("process_code"));
@@ -1034,10 +1279,20 @@ class MvpApiTest {
     int keepRequiredWorkers = ((Number) keepProcess.get("required_workers")).intValue();
     int keepRequiredMachines = ((Number) keepProcess.get("required_machines")).intValue();
 
-    String horizonStartDate = String.valueOf(configBody.get("horizon_start_date"));
+    MvcResult rulesResult = mockMvc.perform(
+        get("/internal/v1/internal/schedule-calendar/rules")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> rulesBody = objectMapper.readValue(rulesResult.getResponse().getContentAsString(), Map.class);
+    String horizonStartDate = String.valueOf(rulesBody.get("horizon_start_date"));
     assertTrue(horizonStartDate != null && !horizonStartDate.isBlank(), "horizon_start_date should not be blank");
 
-    MvcResult routesResult = mockMvc.perform(get("/v1/mes/process-routes"))
+    MvcResult routesResult = mockMvc.perform(
+        get("/v1/mes/process-routes")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andReturn();
     Map<String, Object> routesBody = objectMapper.readValue(routesResult.getResponse().getContentAsString(), Map.class);
@@ -1060,16 +1315,6 @@ class MvpApiTest {
           "capacity_per_shift", 88.5,
           "required_workers", 3,
           "required_machines", 2
-        )
-      ),
-      "resource_pool", List.of(
-        Map.of(
-          "calendar_date", horizonStartDate,
-          "shift_code", "DAY",
-          "process_code", addedProcessCode,
-          "workers_available", 9,
-          "machines_available", 4,
-          "open_flag", 1
         )
       ),
       "initial_carryover_occupancy", List.of(
@@ -1103,7 +1348,6 @@ class MvpApiTest {
     Map<String, Object> createBody = objectMapper.readValue(createResult.getResponse().getContentAsString(), Map.class);
 
     List<Map<String, Object>> createdProcessRows = (List<Map<String, Object>>) createBody.get("process_configs");
-    List<Map<String, Object>> createdResourceRows = (List<Map<String, Object>>) createBody.get("resource_pool");
     List<Map<String, Object>> createdCarryoverRows = (List<Map<String, Object>>) createBody.get("initial_carryover_occupancy");
     List<Map<String, Object>> createdMaterialRows = (List<Map<String, Object>>) createBody.get("material_availability");
 
@@ -1111,7 +1355,6 @@ class MvpApiTest {
       createdProcessRows.stream().anyMatch(row -> addedProcessCode.equals(String.valueOf(row.get("process_code")))),
       "added process should exist after create"
     );
-    assertEquals(1, createdResourceRows.size(), "resource_pool should only contain created row");
     assertEquals(1, createdCarryoverRows.size(), "initial_carryover_occupancy should only contain created row");
     assertEquals(1, createdMaterialRows.size(), "material_availability should only contain created row");
 
@@ -1125,7 +1368,6 @@ class MvpApiTest {
           "required_machines", keepRequiredMachines
         )
       ),
-      "resource_pool", List.of(),
       "initial_carryover_occupancy", List.of(),
       "material_availability", List.of()
     );
@@ -1141,7 +1383,6 @@ class MvpApiTest {
     Map<String, Object> deleteBody = objectMapper.readValue(deleteResult.getResponse().getContentAsString(), Map.class);
 
     List<Map<String, Object>> deletedProcessRows = (List<Map<String, Object>>) deleteBody.get("process_configs");
-    List<Map<String, Object>> deletedResourceRows = (List<Map<String, Object>>) deleteBody.get("resource_pool");
     List<Map<String, Object>> deletedCarryoverRows = (List<Map<String, Object>>) deleteBody.get("initial_carryover_occupancy");
     List<Map<String, Object>> deletedMaterialRows = (List<Map<String, Object>>) deleteBody.get("material_availability");
 
@@ -1149,9 +1390,58 @@ class MvpApiTest {
       deletedProcessRows.stream().noneMatch(row -> addedProcessCode.equals(String.valueOf(row.get("process_code")))),
       "added process should be removed after delete"
     );
-    assertEquals(0, deletedResourceRows.size(), "resource_pool should be empty after delete");
     assertEquals(0, deletedCarryoverRows.size(), "initial_carryover_occupancy should be empty after delete");
     assertEquals(0, deletedMaterialRows.size(), "material_availability should be empty after delete");
+
+    mockMvc.perform(
+        post("/internal/v1/internal/masterdata/config")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-masterdata-crud-deprecated",
+            "resource_pool", List.of()
+          )))
+      )
+      .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void scheduleCalendarRulesEndpointSupportsReadAndWrite() throws Exception {
+    MvcResult getResult = mockMvc.perform(
+        get("/internal/v1/internal/schedule-calendar/rules")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> getBody = objectMapper.readValue(getResult.getResponse().getContentAsString(), Map.class);
+    assertTrue(getBody.containsKey("horizon_start_date"), "rules should expose horizon_start_date");
+    assertTrue(getBody.containsKey("horizon_days"), "rules should expose horizon_days");
+    assertTrue(getBody.containsKey("date_shift_mode_by_date"), "rules should expose date_shift_mode_by_date");
+
+    Map<String, Object> payload = Map.of(
+      "request_id", "req-test-calendar-rules-write",
+      "horizon_start_date", "2026-03-25",
+      "horizon_days", 6,
+      "skip_statutory_holidays", true,
+      "weekend_rest_mode", "SINGLE",
+      "date_shift_mode_by_date", Map.of("2026-03-27", "REST")
+    );
+    MvcResult postResult = mockMvc.perform(
+        post("/internal/v1/internal/schedule-calendar/rules")
+          .header("Authorization", "Bearer test")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(payload))
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    Map<String, Object> postBody = objectMapper.readValue(postResult.getResponse().getContentAsString(), Map.class);
+    assertEquals("2026-03-25", String.valueOf(postBody.get("horizon_start_date")));
+    assertEquals(6, ((Number) postBody.get("horizon_days")).intValue());
+    assertTrue(Boolean.TRUE.equals(postBody.get("skip_statutory_holidays")));
+    assertEquals("SINGLE", String.valueOf(postBody.get("weekend_rest_mode")));
+    Map<String, Object> manualModeMap = (Map<String, Object>) postBody.get("date_shift_mode_by_date");
+    assertEquals("REST", String.valueOf(manualModeMap.get("2026-03-27")));
   }
 
   private static Path locateOfficialResource(String keyword, String extension) throws IOException {

@@ -1,0 +1,34 @@
+﻿button,
+input,
+select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+button {
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+.btn-danger-text {
+  color: #b32020;
+}
+
+.btn-danger-text:hover {
+  color: #9b1111;
+}
+
+.btn-success-text {
+  color: #0f6e4f;
+}
+
+.btn-success-text:hover {
+  color: #0b5b41;
+}
+

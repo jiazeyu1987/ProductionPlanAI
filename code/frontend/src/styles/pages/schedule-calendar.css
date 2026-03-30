@@ -1,0 +1,306 @@
+﻿.schedule-calendar-controls {
+  align-items: center;
+}
+
+.schedule-calendar-page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.schedule-calendar-page-head h2 {
+  margin: 0;
+}
+
+.schedule-calendar-layout {
+  display: grid;
+  grid-template-columns: minmax(540px, 1.2fr) minmax(360px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.schedule-calendar-left {
+  margin-top: 0;
+}
+
+.schedule-calendar-left .lite-calendar-head,
+.schedule-calendar-left .lite-calendar-grid {
+  gap: 4px;
+}
+
+.schedule-calendar-left .lite-calendar-cell {
+  min-height: 56px;
+  padding: 4px;
+}
+
+.schedule-calendar-left .lite-calendar-date {
+  font-size: 0.72rem;
+  margin-bottom: 2px;
+}
+
+.schedule-calendar-left .lite-holiday-tag {
+  margin-bottom: 2px;
+  font-size: 0.6rem;
+}
+
+.schedule-calendar-left .lite-cal-summary span {
+  font-size: 0.62rem;
+}
+
+.schedule-calendar-left .lite-cal-summary strong {
+  font-size: 0.68rem;
+}
+
+.schedule-calendar-left .lite-cal-line-list {
+  margin-top: 4px;
+  gap: 2px;
+}
+
+.schedule-calendar-left .lite-cal-mode-actions {
+  margin-top: 4px;
+  gap: 3px;
+}
+
+.schedule-calendar-left .lite-cal-mode-btn {
+  padding: 1px 5px;
+  font-size: 0.62rem;
+}
+
+.schedule-calendar-left .lite-cal-line-name {
+  font-size: 0.64rem;
+}
+
+.schedule-calendar-left .lite-cal-line-orders {
+  margin-top: 1px;
+  font-size: 0.62rem;
+}
+
+.schedule-calendar-right {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+}
+
+.schedule-calendar-settings {
+  margin-top: 0;
+}
+
+.schedule-calendar-settings h3 {
+  margin: 0 0 10px;
+}
+
+.schedule-calendar-settings .schedule-calendar-controls > label {
+  min-width: 180px;
+}
+
+.schedule-calendar-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-calendar-controls-main {
+  margin-bottom: 0;
+}
+
+.schedule-calendar-controls-rules {
+  margin-top: 6px;
+}
+
+.schedule-calendar-weekend-group {
+  margin-left: 0;
+}
+
+.schedule-calendar-manual-tag {
+  display: inline-block;
+  margin-top: 4px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: #0f6e4f;
+  background: #ddf3e8;
+}
+
+.schedule-calendar-mode-btn-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+}
+
+.schedule-calendar-mode-btn-day {
+  border-color: #222;
+  box-shadow: inset 0 0 0 1px #222;
+  background: #fff;
+  color: #111;
+}
+
+.schedule-calendar-mode-btn-day:hover {
+  border-color: #222;
+  background: #fff;
+  color: #111;
+}
+
+.schedule-calendar-mode-btn-night {
+  border-color: #111;
+  box-shadow: inset 0 0 0 1px #111;
+  background: #111;
+  color: #fff;
+}
+
+.schedule-calendar-mode-btn-night:hover {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.schedule-calendar-mode-btn-both {
+  border-color: #ec9a3b;
+  box-shadow: inset 0 0 0 1px #ec9a3b;
+  background: #ffd39a;
+  color: #c62828;
+  font-weight: 600;
+}
+
+.schedule-calendar-mode-btn-both:hover {
+  border-color: #ec9a3b;
+  background: #ffd39a;
+  color: #c62828;
+}
+
+.schedule-calendar-warning {
+  margin: 8px 0 10px;
+  border: 1px solid #f1ccb0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  color: #8b3d00;
+  background: #fff4e9;
+}
+
+.schedule-calendar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.schedule-calendar-tab-btn {
+  border: 1px solid #cfded4;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #f4faf6;
+  color: #234236;
+  font-size: 0.78rem;
+}
+
+.schedule-calendar-tab-btn-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+  color: #0e4f38;
+  font-weight: 600;
+}
+
+.schedule-calendar-workshop-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.schedule-calendar-workshop-card {
+  border: 1px solid #dbe6de;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fbf9;
+}
+
+.schedule-calendar-workshop-card h4 {
+  margin: 0 0 4px;
+}
+
+.schedule-calendar-line-list {
+  display: grid;
+  gap: 8px;
+}
+
+.schedule-calendar-line-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 130px) minmax(0, 1fr);
+  gap: 8px;
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+
+.schedule-calendar-line-name-btn {
+  display: block;
+  border: 1px solid #cdded3;
+  border-radius: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 600;
+  text-decoration: none;
+  color: #234236;
+  background: #f7fbf8;
+}
+
+.schedule-calendar-line-name-btn:hover {
+  border-color: #7db59d;
+  background: #eef8f2;
+}
+
+.schedule-calendar-line-name-btn-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+  color: #0e4f38;
+}
+
+.schedule-calendar-line-orders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.schedule-calendar-line-config {
+  margin-top: 10px;
+  border: 1px dashed #c9ddd0;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #f7fbf8;
+}
+
+.schedule-calendar-line-config h5 {
+  margin: 0 0 6px;
+  font-size: 0.86rem;
+}
+
+.schedule-calendar-process-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+}
+
+.schedule-calendar-process-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dbe6de;
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fff;
+  font-size: 0.76rem;
+}
+
+.schedule-calendar-process-option code {
+  font-size: 0.68rem;
+  color: #4f6d60;
+}
+
+.schedule-calendar-month-toolbar {
+  gap: 8px;
+}
+

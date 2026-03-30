@@ -1,7 +1,13 @@
 ﻿import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import SimpleTable from "../components/SimpleTable";
-import { loadList, postContract } from "../services/api";
+import {
+  ackAlert,
+  closeAlert,
+  listAlerts,
+  listMesReportings,
+  listScheduleVersionTasks
+} from "../features/dispatch-alert/apiClient";
 
 const STATUS_CN = {
   OPEN: "待处理",
@@ -54,8 +60,7 @@ export default function AlertsPage() {
   const [status, setStatus] = useState("");
 
   async function refresh(nextStatus = status) {
-    const qs = nextStatus ? `?status=${encodeURIComponent(nextStatus)}` : "";
-    const data = await loadList(`/internal/v1/internal/alerts${qs}`);
+    const data = await listAlerts(nextStatus);
     const items = data.items ?? [];
     const progressRows = items.filter((row) => isProgressGap(row));
     if (progressRows.length === 0) {
@@ -66,10 +71,10 @@ export default function AlertsPage() {
     const versions = [...new Set(progressRows.map((row) => row.version_no).filter(Boolean))];
     const taskResponses = await Promise.all(
       versions.map((versionNo) =>
-        loadList(`/internal/v1/internal/schedule-versions/${encodeURIComponent(versionNo)}/tasks`).catch(() => ({ items: [] }))
+        listScheduleVersionTasks(versionNo).catch(() => ({ items: [] }))
       )
     );
-    const reportingRes = await loadList("/v1/mes/reportings").catch(() => ({ items: [] }));
+    const reportingRes = await listMesReportings().catch(() => ({ items: [] }));
 
     const plannedMap = new Map();
     versions.forEach((versionNo, index) => {
@@ -116,10 +121,15 @@ export default function AlertsPage() {
   }
 
   async function action(alertId, kind) {
-    await postContract(`/internal/v1/internal/alerts/${alertId}/${kind}`, {
+    const payload = {
       operator: "operator01",
       reason: "控制台处理"
-    });
+    };
+    if (kind === "ack") {
+      await ackAlert(alertId, payload);
+    } else {
+      await closeAlert(alertId, payload);
+    }
     await refresh();
   }
 

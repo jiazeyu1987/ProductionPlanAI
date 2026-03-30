@@ -1,5 +1,5 @@
 server:
-  port: ${PORT:5931}
+  port: 5931
 
 spring:
   profiles:
@@ -32,5 +32,18 @@ mvp:
   shift-hours: 12
   shifts-per-day: 2
   erp:
+    base-url: ${ERP_BASE_URL:}
+    acct-id: ${ERP_ACCT_ID:}
+    username: ${ERP_USERNAME:}
+    password: ${ERP_PASSWORD:}
+    lcid: ${ERP_LCID:2052}
+    timeout: ${ERP_TIMEOUT:30}
+    verify-ssl: ${ERP_VERIFY_SSL:true}
     use-real-orders: ${ERP_USE_REAL_ORDERS:true}
     sqlite-path: ${ERP_SQLITE_PATH:D:/ProjectPackage/demo/erp_demo/erp_recent_orders.db}
+    refresh:
+      enabled: ${ERP_REFRESH_ENABLED:true}
+      fixed-delay-ms: ${ERP_REFRESH_FIXED_DELAY_MS:60000}
+      initial-delay-ms: ${ERP_REFRESH_INITIAL_DELAY_MS:10000}
+      trigger-min-interval-ms: ${ERP_REFRESH_TRIGGER_MIN_INTERVAL_MS:5000}
+      read-through-on-empty: ${ERP_REFRESH_READ_THROUGH_ON_EMPTY:true}

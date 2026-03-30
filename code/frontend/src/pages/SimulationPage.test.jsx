@@ -64,4 +64,19 @@ describe("SimulationPage", () => {
     expect(screen.queryByRole("tab", { name: /批量/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /快进/ })).toBeNull();
   });
+
+  it("calls manual advance endpoint with client local date", async () => {
+    const expectedClientDate = new Date().toLocaleDateString("sv-SE");
+    render(<SimulationPage />);
+    await waitFor(() => expect(loadList).toHaveBeenCalled());
+
+    fireEvent.click(screen.getAllByRole("button", { name: "推进一天" })[0]);
+
+    await waitFor(() =>
+      expect(postContract).toHaveBeenCalledWith(
+        "/internal/v1/internal/simulation/manual/advance-day",
+        { client_date: expectedClientDate }
+      )
+    );
+  });
 });

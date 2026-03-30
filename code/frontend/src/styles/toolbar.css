@@ -1,0 +1,195 @@
+﻿.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.lite-top-toolbar {
+  position: relative;
+  align-items: center;
+  gap: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid #c9d8ce;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 88% 12%, #eaf5ff 0%, #f6fbff 14%, transparent 34%),
+    linear-gradient(122deg, #edf5f0 0%, #fafdfb 58%, #f4f9ff 100%);
+  box-shadow:
+    0 8px 20px #b8c8bd33,
+    inset 0 1px 0 #ffffffd9;
+}
+
+.lite-top-toolbar > * {
+  position: relative;
+  z-index: 1;
+}
+
+.lite-toolbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 6px 10px;
+  border: 1px solid #cedcd3;
+  border-radius: 11px;
+  background: #ffffffd9;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.lite-toolbar-label {
+  font-weight: 600;
+  color: #2a4638;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.lite-toolbar-field input[type="date"] {
+  min-width: 146px;
+  padding: 7px 9px;
+  border-color: #cfdbd2;
+  background: #f8fcfa;
+}
+
+.toolbar-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolbar-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+}
+
+.toolbar-choice-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  border: 1px solid #cedcd3;
+  border-radius: 11px;
+  padding: 6px 9px;
+  background: #ffffffd9;
+  box-shadow: inset 0 1px 0 #ffffff;
+}
+
+.lite-toolbar-subtitle {
+  margin-right: 4px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #355849;
+}
+
+.lite-pill-check {
+  padding: 6px 9px;
+  border: 1px solid #d2ddd5;
+  border-radius: 10px;
+  background: #fff;
+  line-height: 1;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.lite-pill-check:hover {
+  border-color: #9ebfb1;
+  transform: translateY(-1px);
+}
+
+.lite-pill-check.is-active {
+  border-color: #4f9e7c;
+  background: #e8f7ef;
+  box-shadow: inset 0 0 0 1px #bfe5d1;
+  color: #134d37;
+  font-weight: 600;
+}
+
+.lite-mode-option {
+  min-width: 52px;
+  justify-content: center;
+}
+
+.lite-top-toolbar .toolbar-check input[type="checkbox"] {
+  accent-color: #0f6e4f;
+}
+
+.lite-year-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 11px;
+  border: 1px solid #cee1d4;
+  border-radius: 999px;
+  background: #edf8f2;
+  color: #315e4f;
+  font-weight: 500;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.lite-toolbar-actions {
+  margin-left: auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 3px;
+  border: 1px solid #d4e0d8;
+  border-radius: 12px;
+  background: #ffffffcc;
+}
+
+.lite-toolbar-actions button {
+  min-height: 36px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  box-shadow: 0 1px 0 #dce6df;
+  transition:
+    transform 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.lite-toolbar-actions button:hover {
+  transform: translateY(-1px);
+}
+
+.lite-action-primary {
+  border-color: #0f6e4f;
+  color: #fff;
+  background: linear-gradient(160deg, #169167 0%, #0f6e4f 100%);
+  box-shadow: 0 8px 16px #0f6e4f3b;
+}
+
+.lite-action-primary:hover {
+  border-color: #0b5b41;
+  background: linear-gradient(160deg, #13825d 0%, #0c5f45 100%);
+}
+
+.lite-action-secondary {
+  border-color: #9fcab5;
+  color: #0e674a;
+  font-weight: 600;
+  background: linear-gradient(180deg, #f4fcf8 0%, #e8f7ef 100%);
+}
+
+.lite-action-soft {
+  border-color: #cad8cf;
+  color: #244738;
+  background: #fff;
+}
+
+.lite-action-danger {
+  border-color: #efc1c1;
+  color: #b32020;
+  background: #fff7f7;
+}
+
+.lite-action-danger:hover {
+  border-color: #df8f8f;
+  background: #ffefef;
+}
+

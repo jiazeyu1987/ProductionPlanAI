@@ -1,0 +1,211 @@
+﻿.topology-view-switch {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  border: 1px solid #ccdbd1;
+  border-radius: 11px;
+  padding: 5px;
+  background: #f4faf6;
+}
+
+.topology-view-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  color: #365a49;
+  background: transparent;
+}
+
+.topology-view-btn:hover {
+  border: none;
+  background: #e9f4ee;
+}
+
+.topology-view-btn-active {
+  color: #0f6e4f;
+  font-weight: 600;
+  background: #fff;
+  box-shadow: 0 1px 2px #00000012;
+}
+
+.topology-friendly-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.topology-workshop-list {
+  border: 1px solid #dbe6de;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fbf9;
+}
+
+.topology-workshop-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.topology-workshop-btn {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid #d3e0d7;
+  border-radius: 9px;
+  padding: 8px;
+  text-align: left;
+  background: #fff;
+  color: #274638;
+}
+
+.topology-workshop-btn:first-of-type {
+  margin-top: 0;
+}
+
+.topology-workshop-btn-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+}
+
+.topology-workshop-meta {
+  display: block;
+  margin-top: 4px;
+  color: #5c7569;
+  font-size: 0.74rem;
+}
+
+.topology-friendly-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.topology-friendly-card {
+  border: 1px solid #dbe6de;
+  border-radius: 12px;
+  padding: 10px;
+  background: #f8fbf9;
+}
+
+.topology-friendly-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.topology-friendly-form label {
+  display: grid;
+  gap: 5px;
+  color: #2a493b;
+  font-size: 0.84rem;
+}
+
+.topology-line-list {
+  display: grid;
+  gap: 8px;
+}
+
+.topology-line-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.topology-line-tab {
+  flex: 0 0 auto;
+  min-width: 120px;
+  border: 1px solid #cfded4;
+  border-radius: 10px;
+  padding: 7px 10px;
+  text-align: left;
+  color: #274638;
+  background: #fff;
+}
+
+.topology-line-tab:hover {
+  border-color: #7db59d;
+  background: #eef8f2;
+}
+
+.topology-line-tab-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+  color: #0e4f38;
+}
+
+.topology-line-tab-title {
+  display: block;
+  font-weight: 600;
+}
+
+.topology-line-tab-meta {
+  display: block;
+  margin-top: 2px;
+  color: #597265;
+  font-size: 0.72rem;
+}
+
+.topology-line-card {
+  border: 1px solid #dbe6de;
+  border-radius: 10px;
+  padding: 8px;
+  background: #fff;
+}
+
+.topology-line-card-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #f3fbf7;
+}
+
+.topology-line-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.topology-line-form {
+  margin-bottom: 8px;
+}
+
+.topology-process-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px;
+}
+
+.topology-process-pill {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d6e3db;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  color: #234236;
+  background: #fff;
+}
+
+.topology-process-pill input[type="checkbox"] {
+  margin: 0;
+}
+
+.topology-process-pill code {
+  color: #587466;
+  font-size: 0.68rem;
+}
+
+.topology-process-pill-active {
+  border-color: #7db59d;
+  box-shadow: inset 0 0 0 1px #7db59d;
+  background: #eef8f2;
+}
+

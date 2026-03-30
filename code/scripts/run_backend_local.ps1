@@ -54,6 +54,11 @@ if (Test-Path $erpDefaultsScript) {
   Set-EnvIfEmpty -Name "ERP_VERIFY_SSL" -Value "false"
 }
 
+$repoRoot = Split-Path -Parent $root
+$snapshotPath = Join-Path $repoRoot "db\\order-pool.snapshot.json"
+Set-EnvIfEmpty -Name "MVP_ORDER_POOL_SNAPSHOT_ENABLED" -Value "true"
+Set-EnvIfEmpty -Name "MVP_ORDER_POOL_SNAPSHOT_PATH" -Value $snapshotPath
+
 $fallbackSqlitePath = "D:\ProjectPackage\demo\other\erp_recent_orders.db"
 $defaultSqlitePath = "D:\ProjectPackage\demo\erp_demo\erp_recent_orders.db"
 $configuredSqlitePath = [Environment]::GetEnvironmentVariable("ERP_SQLITE_PATH", "Process")

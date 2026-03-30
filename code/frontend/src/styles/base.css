@@ -1,0 +1,21 @@
+﻿:root {
+  --bg: #f4f6f2;
+  --bg-gradient: linear-gradient(130deg, #dce8dd 0%, #f4f6f2 55%, #f8ebe1 100%);
+  --panel: #ffffffcc;
+  --text: #1d2c24;
+  --muted: #4f6258;
+  --line: #d0d8d2;
+  --accent: #0f6e4f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-gradient);
+  color: var(--text);
+  font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+}
+

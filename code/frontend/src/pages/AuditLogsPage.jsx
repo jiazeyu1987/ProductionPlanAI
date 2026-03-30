@@ -1,14 +1,13 @@
 import { useEffect, useState } from "react";
 import SimpleTable from "../components/SimpleTable";
-import { loadList } from "../services/api";
+import { listAuditLogs } from "../features/dispatch-alert/apiClient";
 
 export default function AuditLogsPage() {
   const [rows, setRows] = useState([]);
   const [requestId, setRequestId] = useState("");
 
   async function refresh(id = requestId) {
-    const qs = id ? `?request_id=${encodeURIComponent(id)}` : "";
-    const data = await loadList(`/internal/v1/internal/audit-logs${qs}`);
+    const data = await listAuditLogs(id);
     setRows(data.items);
   }
 

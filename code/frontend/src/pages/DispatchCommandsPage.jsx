@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import SimpleTable from "../components/SimpleTable";
-import { loadList, postContract } from "../services/api";
+import {
+  approveDispatchCommand,
+  createDispatchCommand,
+  listDispatchCommands
+} from "../features/dispatch-alert/apiClient";
 
 const commandOptions = [
   { value: "INSERT", label: "插单" },
@@ -18,12 +22,12 @@ export default function DispatchCommandsPage() {
   const [commandType, setCommandType] = useState("INSERT");
 
   async function refresh() {
-    const data = await loadList("/internal/v1/internal/dispatch-commands");
+    const data = await listDispatchCommands();
     setRows(data.items ?? []);
   }
 
   async function create() {
-    await postContract("/internal/v1/internal/dispatch-commands", {
+    await createDispatchCommand({
       command_type: commandType,
       target_order_no: orderNo,
       target_order_type: "production",
@@ -36,7 +40,7 @@ export default function DispatchCommandsPage() {
   }
 
   async function approve(commandId, decision) {
-    await postContract(`/internal/v1/internal/dispatch-commands/${commandId}/approvals`, {
+    await approveDispatchCommand(commandId, {
       approver: "manager01",
       decision,
       decision_reason: "控制台审批",

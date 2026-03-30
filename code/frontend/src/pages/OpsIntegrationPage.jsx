@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import SimpleTable from "../components/SimpleTable";
-import { loadList, postContract } from "../services/api";
+import { listIntegrationInbox, listIntegrationOutbox, retryIntegrationOutbox } from "../features/integration/apiClient";
 
 export default function OpsIntegrationPage() {
   const [inbox, setInbox] = useState([]);
@@ -8,15 +8,15 @@ export default function OpsIntegrationPage() {
 
   async function refresh() {
     const [inboxRes, outboxRes] = await Promise.all([
-      loadList("/internal/v1/internal/integration/inbox"),
-      loadList("/internal/v1/internal/integration/outbox")
+      listIntegrationInbox(),
+      listIntegrationOutbox()
     ]);
     setInbox(inboxRes.items);
     setOutbox(outboxRes.items);
   }
 
   async function retry(messageId) {
-    await postContract(`/internal/v1/internal/integration/outbox/${messageId}/retry`, {
+    await retryIntegrationOutbox(messageId, {
       operator: "admin01"
     });
     await refresh();
