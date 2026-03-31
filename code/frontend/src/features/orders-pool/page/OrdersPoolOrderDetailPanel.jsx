@@ -1,4 +1,4 @@
-import SimpleTable from "../../../components/SimpleTable";
+﻿import SimpleTable from "../../../components/SimpleTable";
 import ProductCell from "../ProductCell";
 import { orderStatusText, progressText, toIntText } from "..";
 import { formatDateTime } from "../../../utils/datetime";
@@ -16,10 +16,14 @@ export default function OrdersPoolOrderDetailPanel({
   finishedSummary,
   materialsLoading,
   materialsRefreshing,
+  selfMadeRefreshing,
+  inventoryRefreshing,
   materialsError,
   materialsRefreshWarning,
   materialTreeRows,
   onRefreshMaterialsFromErp,
+  onRefreshSelfMadeFromErp,
+  onRefreshInventoryFromErp,
   onToggleMaterialNode,
   selectedOrderReportings,
   selectedOrderProcessContexts,
@@ -72,7 +76,7 @@ export default function OrdersPoolOrderDetailPanel({
                     disabled={submitting || !expectedStartDraft}
                     onClick={onSaveExpectedStartTime}
                   >
-                    保存并重算预计完成
+                    保存并重算预计完成时间
                   </button>
                 </div>
               </td>
@@ -94,7 +98,7 @@ export default function OrdersPoolOrderDetailPanel({
               </td>
             </tr>
             <tr>
-              <th>成品完成数</th>
+              <th>成品完成数量</th>
               <td>{toIntText(finishedSummary.finishedQty)}</td>
               <th>批次</th>
               <td>{finishedSummary.batchNo}</td>
@@ -113,10 +117,14 @@ export default function OrdersPoolOrderDetailPanel({
         selectedOrderNo={selectedOrderNo}
         materialsLoading={materialsLoading}
         materialsRefreshing={materialsRefreshing}
+        selfMadeRefreshing={selfMadeRefreshing}
+        inventoryRefreshing={inventoryRefreshing}
         materialsError={materialsError}
         materialsRefreshWarning={materialsRefreshWarning}
         materialTreeRows={materialTreeRows}
         onRefreshMaterialsFromErp={onRefreshMaterialsFromErp}
+        onRefreshSelfMadeFromErp={onRefreshSelfMadeFromErp}
+        onRefreshInventoryFromErp={onRefreshInventoryFromErp}
         onToggleMaterialNode={onToggleMaterialNode}
       />
 
@@ -131,7 +139,7 @@ export default function OrdersPoolOrderDetailPanel({
           },
           {
             key: "report_qty",
-            title: "报工量",
+            title: "报工数量",
             render: (value) => toIntText(value),
           },
           { key: "report_time", title: "报工时间" },

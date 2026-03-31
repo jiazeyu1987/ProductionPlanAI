@@ -1,15 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   listMaterialChildrenByParentCode,
   listOrderPoolMaterials,
-} from "../../order-execution/ordersPoolClient";
+} from "../../order-execution";
 import { fetchOrdersPoolSnapshot } from "../../order-execution/ordersPoolService";
+import { listOrderMaterialAvailability } from "../../masterdata";
 import {
   buildFinishedSummary,
   buildMaterialTreeRows,
   buildSelectedOrderReportings,
-  collectSelfMadeCodes,
   collapseExpandedMaterialNodeKeys,
   createOrderCommandAndRefresh,
   deleteOrderAndRefresh,
@@ -25,6 +25,12 @@ import {
 } from "..";
 
 const ORDERS_POOL_FILTERS_STORAGE_KEY = "orders-pool-filters";
+const ORDER_STATUS_FILTER_SET = new Set(["OPEN", "IN_PROGRESS", "DONE", "DELAY"]);
+
+function normalizeOrderStatusFilter(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  return ORDER_STATUS_FILTER_SET.has(normalized) ? normalized : "";
+}
 
 function readStoredOrdersPoolFilters() {
   if (typeof window === "undefined" || !window.localStorage) {
@@ -64,6 +70,8 @@ export function useOrdersPoolPageController() {
   const [selectedOrderMaterials, setSelectedOrderMaterials] = useState([]);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [materialsRefreshing, setMaterialsRefreshing] = useState(false);
+  const [selfMadeRefreshing, setSelfMadeRefreshing] = useState(false);
+  const [inventoryRefreshing, setInventoryRefreshing] = useState(false);
   const [materialsError, setMaterialsError] = useState("");
   const [materialsRefreshWarning, setMaterialsRefreshWarning] = useState("");
   const [expandedMaterialNodeKeys, setExpandedMaterialNodeKeys] = useState([]);
@@ -75,18 +83,18 @@ export function useOrdersPoolPageController() {
       ? storedFilters.productKeyword
       : "",
   );
-  const [showUnfinishedOnly, setShowUnfinishedOnly] = useState(
-    typeof storedFilters.showUnfinishedOnly === "boolean"
-      ? storedFilters.showUnfinishedOnly
-      : false,
+  const [orderStatusFilter, setOrderStatusFilter] = useState(
+    normalizeOrderStatusFilter(storedFilters.orderStatusFilter),
   );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [expectedStartDraft, setExpectedStartDraft] = useState("");
   const [searchParams, setSearchParams] = useSearchParams();
+  const autoLoadedMaterialsOrderNoRef = useRef("");
 
   const orderNoFilter = (searchParams.get("order_no") || "").trim();
+  const [orderNoDraft, setOrderNoDraft] = useState(orderNoFilter);
 
   async function refreshSnapshot() {
     const snapshot = await fetchOrdersPoolSnapshot();
@@ -164,9 +172,13 @@ export function useOrdersPoolPageController() {
   useEffect(() => {
     writeStoredOrdersPoolFilters({
       productKeyword,
-      showUnfinishedOnly,
+      orderStatusFilter,
     });
-  }, [productKeyword, showUnfinishedOnly]);
+  }, [productKeyword, orderStatusFilter]);
+
+  useEffect(() => {
+    setOrderNoDraft(orderNoFilter);
+  }, [orderNoFilter]);
 
   const scheduledSet = useMemo(
     () => new Set(scheduledOrderNos),
@@ -174,8 +186,8 @@ export function useOrdersPoolPageController() {
   );
 
   const filteredRows = useMemo(() => {
-    return filterOrdersPoolRows(allRows, showUnfinishedOnly, orderNoFilter, productKeyword);
-  }, [allRows, showUnfinishedOnly, orderNoFilter, productKeyword]);
+    return filterOrdersPoolRows(allRows, orderStatusFilter, orderNoFilter, productKeyword);
+  }, [allRows, orderStatusFilter, orderNoFilter, productKeyword]);
 
   const selectedOrder = useMemo(() => {
     return findSelectedOrderByOrderNoFilter(allRows, orderNoFilter);
@@ -309,12 +321,15 @@ export function useOrdersPoolPageController() {
     try {
       await loadMaterialChildrenByParentCode(parentCode);
     } catch (_e) {
-      // 错误已写入节点级错误状态，展开态保留以便用户重试。
+      // Error state is already stored per node for retry feedback.
     }
   }
 
   useEffect(() => {
     let cancelled = false;
+    if (!orderNoFilter) {
+      autoLoadedMaterialsOrderNoRef.current = "";
+    }
     if (!selectedOrderNo) {
       setSelectedOrderMaterials([]);
       setMaterialsError("");
@@ -324,6 +339,11 @@ export function useOrdersPoolPageController() {
       setMaterialChildrenByParentCode({});
       setMaterialChildrenLoadingByParentCode({});
       setMaterialChildrenErrorByParentCode({});
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (autoLoadedMaterialsOrderNoRef.current === selectedOrderNo) {
       return () => {
         cancelled = true;
       };
@@ -341,12 +361,14 @@ export function useOrdersPoolPageController() {
           return;
         }
         setSelectedOrderMaterials(res.items ?? []);
+        autoLoadedMaterialsOrderNoRef.current = selectedOrderNo;
       })
       .catch((e) => {
         if (cancelled) {
           return;
         }
         setSelectedOrderMaterials([]);
+        autoLoadedMaterialsOrderNoRef.current = selectedOrderNo;
         setMaterialsError(e?.message || "加载子物料编码失败。");
       })
       .finally(() => {
@@ -357,7 +379,7 @@ export function useOrdersPoolPageController() {
     return () => {
       cancelled = true;
     };
-  }, [selectedOrderNo]);
+  }, [orderNoFilter, selectedOrderNo]);
 
   async function refreshMaterialsFromErp() {
     if (!selectedOrderNo) {
@@ -370,37 +392,80 @@ export function useOrdersPoolPageController() {
     setMaterialChildrenErrorByParentCode({});
     try {
       const res = await listOrderPoolMaterials(selectedOrderNo, true);
-      const rootRows = res.items ?? [];
-      setSelectedOrderMaterials(rootRows);
-      const pending = [...collectSelfMadeCodes(rootRows)];
-      const visited = new Set();
-      const failedParentCodes = [];
-      while (pending.length > 0) {
-        const parentCode = pending.shift();
-        if (!parentCode || visited.has(parentCode)) {
-          continue;
-        }
-        visited.add(parentCode);
-        try {
-          const children = await loadMaterialChildrenByParentCode(parentCode, { refreshFromErp: true });
-          for (const childCode of collectSelfMadeCodes(children)) {
-            if (!visited.has(childCode) && !pending.includes(childCode)) {
-              pending.push(childCode);
-            }
-          }
-        } catch (_e) {
-          failedParentCodes.push(parentCode);
-        }
-      }
-      if (failedParentCodes.length > 0) {
-        setMaterialsRefreshWarning(`部分自制节点刷新失败（已保留旧缓存）：${failedParentCodes.join("、")}`);
-      }
+      setSelectedOrderMaterials(res.items ?? []);
     } catch (e) {
       setSelectedOrderMaterials([]);
       setMaterialsError(e?.message || "刷新子物料编码失败。");
     } finally {
       setMaterialsLoading(false);
       setMaterialsRefreshing(false);
+    }
+  }
+
+  function collectSelfMadeMaterialCodes() {
+    const codes = new Set();
+    const pushRows = (rows) => {
+      for (const row of rows ?? []) {
+        if (String(row?.child_material_supply_type || "").toUpperCase() !== "SELF_MADE") {
+          continue;
+        }
+        const code = normalizeMaterialCode(row?.child_material_code);
+        if (code) {
+          codes.add(code);
+        }
+      }
+    };
+    pushRows(selectedOrderMaterials);
+    Object.values(materialChildrenByParentCode).forEach((rows) => pushRows(rows));
+    return Array.from(codes);
+  }
+
+  async function refreshSelfMadeMaterialsFromErp() {
+    if (!selectedOrderNo) {
+      return;
+    }
+    const parentCodes = collectSelfMadeMaterialCodes();
+    if (parentCodes.length === 0) {
+      setMaterialsRefreshWarning("当前订单没有可刷新的自制子物料。");
+      return;
+    }
+    setSelfMadeRefreshing(true);
+    setMaterialsError("");
+    setMaterialsRefreshWarning("");
+    try {
+      const refreshedEntries = await Promise.all(
+        parentCodes.map(async (parentCode) => {
+          const res = await listMaterialChildrenByParentCode(parentCode, true);
+          return [parentCode, res.items ?? []];
+        }),
+      );
+      setMaterialChildrenByParentCode((prev) => {
+        const next = { ...prev };
+        for (const [parentCode, rows] of refreshedEntries) {
+          next[parentCode] = rows;
+        }
+        return next;
+      });
+    } catch (e) {
+      setMaterialsError(e?.message || "刷新自制子物料失败。");
+    } finally {
+      setSelfMadeRefreshing(false);
+    }
+  }
+
+  async function refreshInventoryFromErp() {
+    if (!selectedOrderNo) {
+      return;
+    }
+    setInventoryRefreshing(true);
+    setMaterialsError("");
+    setMaterialsRefreshWarning("");
+    try {
+      await listOrderMaterialAvailability(true);
+    } catch (e) {
+      setMaterialsError(e?.message || "刷新库存失败。");
+    } finally {
+      setInventoryRefreshing(false);
     }
   }
 
@@ -435,14 +500,28 @@ export function useOrdersPoolPageController() {
     setSearchParams(next);
   }
 
+  function applyOrderNoFilter() {
+    const next = new URLSearchParams(searchParams);
+    const value = String(orderNoDraft || "").trim();
+    if (value) {
+      next.set("order_no", value);
+    } else {
+      next.delete("order_no");
+    }
+    setSearchParams(next);
+  }
+
   return {
     allRows,
     filteredRows,
     orderNoFilter,
+    orderNoDraft,
+    setOrderNoDraft,
+    applyOrderNoFilter,
     productKeyword,
     setProductKeyword,
-    showUnfinishedOnly,
-    setShowUnfinishedOnly,
+    orderStatusFilter,
+    setOrderStatusFilter,
     error,
     notice,
     submitting,
@@ -463,10 +542,14 @@ export function useOrdersPoolPageController() {
     selectedOrderProcessContexts,
     materialsLoading,
     materialsRefreshing,
+    selfMadeRefreshing,
+    inventoryRefreshing,
     materialsError,
     materialsRefreshWarning,
     materialTreeRows,
     toggleMaterialNode,
     refreshMaterialsFromErp,
+    refreshSelfMadeMaterialsFromErp,
+    refreshInventoryFromErp,
   };
 }

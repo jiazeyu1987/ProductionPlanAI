@@ -18,6 +18,8 @@ final class MvpMaterialRowAssembler {
     row.put("material_list_no", materialListNo);
     row.put("child_material_code", childMaterialCode);
     row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+    row.put("spec_model", string(rawRow, "spec_model", ""));
+    row.put("issue_qty", number(rawRow, "issue_qty", number(rawRow, "required_qty", 0d)));
     row.put("required_qty", number(rawRow, "required_qty", 0d));
     row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
     row.put("source_bill_type", string(rawRow, "source_bill_type", ""));
@@ -39,6 +41,8 @@ final class MvpMaterialRowAssembler {
     row.put("parent_material_code", parentMaterialCode);
     row.put("child_material_code", childMaterialCode);
     row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+    row.put("spec_model", string(rawRow, "spec_model", ""));
+    row.put("issue_qty", number(rawRow, "issue_qty", number(rawRow, "required_qty", 0d)));
     row.put("required_qty", number(rawRow, "required_qty", 0d));
     row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
     row.put("source_bill_type", string(rawRow, "source_bill_type", ""));

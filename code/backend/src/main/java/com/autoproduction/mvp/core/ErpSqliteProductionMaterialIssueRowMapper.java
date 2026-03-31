@@ -53,6 +53,25 @@ final class ErpSqliteProductionMaterialIssueRowMapper extends ErpSqliteOrderRowM
       row.get("FMaterialId.FName"),
       row.get("child_material_name_cn")
     ));
+    String childMaterialSpecModel = fixPotentialUtf8Mojibake(firstText(
+      row.get("FSubMaterialId.FSpecification"),
+      row.get("FTreeEntity_FSubMaterialId.FSpecification"),
+      row.get("FEntity_FSubMaterialId.FSpecification"),
+      row.get("FTreeEntity_FMATERIALIDCHILD.FSpecification"),
+      row.get("FTreeEntity_FMaterialIdChild.FSpecification"),
+      row.get("FEntity_FMATERIALIDCHILD.FSpecification"),
+      row.get("FEntity_FMaterialIdChild.FSpecification"),
+      row.get("FPPBomEntry_FMATERIALIDCHILD.FSpecification"),
+      row.get("FPPBomEntry_FMaterialIdChild.FSpecification"),
+      row.get("FPPBomEntry_FMaterialId.FSpecification"),
+      row.get("FPPBOMENTRY_FMaterialId.FSpecification"),
+      row.get("FTreeEntity_FMaterialId.FSpecification"),
+      row.get("FTreeEntity_FMATERIALID.FSpecification"),
+      row.get("FEntity_FMaterialId.FSpecification"),
+      row.get("FEntity_FMATERIALID.FSpecification"),
+      row.get("FMaterialId.FSpecification"),
+      row.get("spec_model")
+    ));
     Number requiredQty = firstNonNullNumber(
       toNumber(row.get("FActualQty")),
       toNumber(row.get("required_qty")),
@@ -115,6 +134,8 @@ final class ErpSqliteProductionMaterialIssueRowMapper extends ErpSqliteOrderRowM
     out.put("source_production_order_no", sourceProductionOrderNo);
     out.put("child_material_code", childMaterialCode);
     out.put("child_material_name_cn", childMaterialName);
+    out.put("spec_model", childMaterialSpecModel);
+    out.put("issue_qty", requiredQty == null ? 0d : requiredQty);
     out.put("required_qty", requiredQty == null ? 0d : requiredQty);
     out.put("last_update_time", firstText(row.get("erp_fetched_at"), now));
     out.put("erp_source_table", firstText(row.get("erp_source_table"), "ERP_API_PRODUCTION_MATERIAL_ISSUE"));

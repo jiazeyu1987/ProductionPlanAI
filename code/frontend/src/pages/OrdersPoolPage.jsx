@@ -16,20 +16,13 @@ export default function OrdersPoolPage() {
         onRefresh={() => controller.refresh().catch(() => {})}
         productKeyword={controller.productKeyword}
         onProductKeywordChange={controller.setProductKeyword}
-        showUnfinishedOnly={controller.showUnfinishedOnly}
-        onShowUnfinishedOnlyChange={controller.setShowUnfinishedOnly}
-        orderNoFilter={controller.orderNoFilter}
-        onClearOrderNoFilter={controller.clearOrderNoFilter}
-        totalCount={totalCount}
-        filteredCount={filteredCount}
+        orderStatusFilter={controller.orderStatusFilter}
+        onOrderStatusFilterChange={controller.setOrderStatusFilter}
       />
-      {controller.orderNoFilter ? (
-        <p className="hint">当前按生产订单定位：{controller.orderNoFilter}</p>
-      ) : null}
       {controller.error ? <p className="error">{controller.error}</p> : null}
       {controller.notice ? <p className="notice">{controller.notice}</p> : null}
       {!controller.error && totalCount > 0 && filteredCount === 0 ? (
-        <p className="notice">当前筛选条件无匹配，请清空“产品关键词过滤”或取消“仅显示未完成订单”。</p>
+        <p className="notice">当前筛选条件无匹配，请清空“产品关键词过滤”或将“状态筛选”切换为“全部状态”。</p>
       ) : null}
 
       <OrdersPoolOrderDetailPanel
@@ -44,10 +37,14 @@ export default function OrdersPoolPage() {
         finishedSummary={controller.finishedSummary}
         materialsLoading={controller.materialsLoading}
         materialsRefreshing={controller.materialsRefreshing}
+        selfMadeRefreshing={controller.selfMadeRefreshing}
+        inventoryRefreshing={controller.inventoryRefreshing}
         materialsError={controller.materialsError}
         materialsRefreshWarning={controller.materialsRefreshWarning}
         materialTreeRows={controller.materialTreeRows}
         onRefreshMaterialsFromErp={() => controller.refreshMaterialsFromErp().catch(() => {})}
+        onRefreshSelfMadeFromErp={() => controller.refreshSelfMadeMaterialsFromErp().catch(() => {})}
+        onRefreshInventoryFromErp={() => controller.refreshInventoryFromErp().catch(() => {})}
         onToggleMaterialNode={(row) => controller.toggleMaterialNode(row).catch(() => {})}
         selectedOrderReportings={controller.selectedOrderReportings}
         selectedOrderProcessContexts={controller.selectedOrderProcessContexts}

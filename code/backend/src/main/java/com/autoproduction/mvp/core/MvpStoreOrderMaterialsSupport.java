@@ -5,11 +5,9 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static com.autoproduction.mvp.core.MvpStoreCoreExceptionSupport.number;
 import static com.autoproduction.mvp.core.MvpStoreCoreExceptionSupport.string;
@@ -37,24 +35,27 @@ final class MvpStoreOrderMaterialsSupport {
       return copyMaterialRows(cached.rows);
     }
 
-    Map<String, Object> orderRow = domain.erpDataManager.getProductionOrders().stream()
-      .filter(row -> normalizedOrderNo.equals(string(row, "production_order_no", null)))
-      .findFirst()
-      .orElse(null);
-    if (orderRow == null) {
-      domain.orderPoolMaterialsCache.put(
-        normalizedOrderNo,
-        new CachedOrderPoolMaterials(List.of(), OffsetDateTime.now(ZoneOffset.UTC).toString())
-      );
-      return List.of();
-    }
-    String materialListNo = string(orderRow, "material_list_no", null);
-    String productCode = string(orderRow, "product_code", null);
+    Map<String, Object> orderRow = resolveProductionOrderRow(domain, normalizedOrderNo);
+    String materialListNo = orderRow == null ? null : string(orderRow, "material_list_no", null);
+    String productCode = orderRow == null ? null : string(orderRow, "product_code", null);
+
+    // Keep detail-page behavior aligned with the ERP test page:
+    // query by production order number first, then optionally refine with material list no.
     List<Map<String, Object>> rawRows = domain.erpDataManager.getProductionMaterialIssuesByOrder(
       normalizedOrderNo,
-      materialListNo,
+      null,
       refreshFromErp
     );
+    if ((rawRows == null || rawRows.isEmpty()) && materialListNo != null && !materialListNo.isBlank()) {
+      rawRows = domain.erpDataManager.getProductionMaterialIssuesByOrder(
+        normalizedOrderNo,
+        materialListNo,
+        refreshFromErp
+      );
+    }
+    if (rawRows == null || rawRows.isEmpty()) {
+      return List.of();
+    }
     boolean hasExpandedBomRows = rawRows.stream()
       .anyMatch(row -> "ERP_API_BOM_VIEW_ENTRY".equalsIgnoreCase(string(row, "erp_source_table", "")));
     if (!hasExpandedBomRows) {
@@ -73,11 +74,10 @@ final class MvpStoreOrderMaterialsSupport {
     String normalizedProductCode = normalizeMaterialCode(productCode);
     String normalizedMaterialListNo = normalizeMaterialCode(materialListNo);
     String normalizedMaterialListBaseCode = materialListBaseCode(normalizedMaterialListNo);
-    List<Map<String, Object>> rows = new ArrayList<>();
-    Set<String> seenCodes = new HashSet<>();
+    Map<String, Map<String, Object>> preferredRawRowsByCode = new LinkedHashMap<>();
     for (Map<String, Object> rawRow : rawRows) {
       String code = normalizeMaterialCode(string(rawRow, "child_material_code", null));
-      if (code.isBlank() || "UNKNOWN".equals(code) || !seenCodes.add(code)) {
+      if (code.isBlank() || "UNKNOWN".equals(code)) {
         continue;
       }
       if (
@@ -87,22 +87,33 @@ final class MvpStoreOrderMaterialsSupport {
       ) {
         continue;
       }
+      preferredRawRowsByCode.merge(code, rawRow, MvpStoreOrderMaterialsSupport::preferMoreCompleteMaterialRow);
+    }
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (Map.Entry<String, Map<String, Object>> entry : preferredRawRowsByCode.entrySet()) {
+      String code = entry.getKey();
+      Map<String, Object> rawRow = entry.getValue();
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("order_no", normalizedOrderNo);
       row.put("material_list_no", materialListNo);
       row.put("child_material_code", code);
       row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+      row.put("spec_model", string(rawRow, "spec_model", ""));
+      row.put("issue_qty", number(rawRow, "issue_qty", number(rawRow, "required_qty", 0d)));
       row.put("required_qty", number(rawRow, "required_qty", 0d));
       row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
       row.put("source_bill_type", string(rawRow, "source_bill_type", ""));
       row.put("pick_material_bill_no", string(rawRow, "pick_material_bill_no", ""));
       row.put("issue_date", string(rawRow, "issue_date", ""));
-      Map<String, Object> supplyInfo = domain.erpDataManager.getMaterialSupplyInfo(code);
+      Map<String, Object> supplyInfo = safeMaterialSupplyInfo(domain, code);
       row.put("child_material_supply_type", string(supplyInfo, "supply_type", "UNKNOWN"));
       row.put("child_material_supply_type_name_cn", string(supplyInfo, "supply_type_name_cn", "未知"));
       rows.add(domain.localizeRow(row));
     }
     rows.sort(Comparator.comparing(row -> string(row, "child_material_code", "")));
+    if (rows.isEmpty()) {
+      return List.of();
+    }
     List<Map<String, Object>> cachedRows = freezeMaterialRows(rows);
     domain.orderPoolMaterialsCache.put(
       normalizedOrderNo,
@@ -132,11 +143,10 @@ final class MvpStoreOrderMaterialsSupport {
       refreshFromErp
     );
     String normalizedParentBaseCode = materialListBaseCode(normalizedParentCode);
-    List<Map<String, Object>> rows = new ArrayList<>();
-    Set<String> seenCodes = new HashSet<>();
+    Map<String, Map<String, Object>> preferredRawRowsByCode = new LinkedHashMap<>();
     for (Map<String, Object> rawRow : rawRows) {
       String code = normalizeMaterialCode(string(rawRow, "child_material_code", null));
-      if (code.isBlank() || "UNKNOWN".equals(code) || !seenCodes.add(code)) {
+      if (code.isBlank() || "UNKNOWN".equals(code)) {
         continue;
       }
       if (
@@ -145,16 +155,24 @@ final class MvpStoreOrderMaterialsSupport {
       ) {
         continue;
       }
+      preferredRawRowsByCode.merge(code, rawRow, MvpStoreOrderMaterialsSupport::preferMoreCompleteMaterialRow);
+    }
+    List<Map<String, Object>> rows = new ArrayList<>();
+    for (Map.Entry<String, Map<String, Object>> entry : preferredRawRowsByCode.entrySet()) {
+      String code = entry.getKey();
+      Map<String, Object> rawRow = entry.getValue();
       Map<String, Object> row = new LinkedHashMap<>();
       row.put("parent_material_code", normalizedParentCode);
       row.put("child_material_code", code);
       row.put("child_material_name_cn", string(rawRow, "child_material_name_cn", ""));
+      row.put("spec_model", string(rawRow, "spec_model", ""));
+      row.put("issue_qty", number(rawRow, "issue_qty", number(rawRow, "required_qty", 0d)));
       row.put("required_qty", number(rawRow, "required_qty", 0d));
       row.put("source_bill_no", string(rawRow, "source_bill_no", ""));
       row.put("source_bill_type", string(rawRow, "source_bill_type", ""));
       row.put("pick_material_bill_no", string(rawRow, "pick_material_bill_no", ""));
       row.put("issue_date", string(rawRow, "issue_date", ""));
-      Map<String, Object> supplyInfo = domain.erpDataManager.getMaterialSupplyInfo(code);
+      Map<String, Object> supplyInfo = safeMaterialSupplyInfo(domain, code);
       row.put("child_material_supply_type", string(supplyInfo, "supply_type", "UNKNOWN"));
       row.put("child_material_supply_type_name_cn", string(supplyInfo, "supply_type_name_cn", "未知"));
       rows.add(domain.localizeRow(row));
@@ -167,5 +185,69 @@ final class MvpStoreOrderMaterialsSupport {
     );
     return copyMaterialRows(cachedRows);
   }
-}
 
+  private static Map<String, Object> resolveProductionOrderRow(MvpStoreOrderDomain domain, String normalizedOrderNo) {
+    Map<String, Object> cachedOrderRow = findProductionOrderRow(domain.erpDataManager.getProductionOrders(), normalizedOrderNo);
+    if (cachedOrderRow != null) {
+      return cachedOrderRow;
+    }
+    return findProductionOrderRow(domain.erpDataManager.loadProductionOrdersLive(), normalizedOrderNo);
+  }
+
+  private static Map<String, Object> safeMaterialSupplyInfo(MvpStoreOrderDomain domain, String materialCode) {
+    try {
+      Map<String, Object> supplyInfo = domain.erpDataManager.getMaterialSupplyInfo(materialCode);
+      if (supplyInfo != null && !supplyInfo.isEmpty()) {
+        return supplyInfo;
+      }
+    } catch (RuntimeException ignore) {
+      // Material attribute is auxiliary metadata. Keep root and child rows renderable when ERP metadata lookup fails.
+    }
+    return Map.of(
+      "supply_type", "UNKNOWN",
+      "supply_type_name_cn", "\u672A\u77E5"
+    );
+  }
+
+  private static Map<String, Object> findProductionOrderRow(List<Map<String, Object>> rows, String normalizedOrderNo) {
+    if (rows == null || rows.isEmpty()) {
+      return null;
+    }
+    return rows.stream()
+      .filter(row -> normalizedOrderNo.equals(string(row, "production_order_no", null)))
+      .findFirst()
+      .orElse(null);
+  }
+
+  private static Map<String, Object> preferMoreCompleteMaterialRow(
+    Map<String, Object> current,
+    Map<String, Object> candidate
+  ) {
+    if (candidate == null) {
+      return current;
+    }
+    if (current == null) {
+      return candidate;
+    }
+    int currentScore = materialRowCompletenessScore(current);
+    int candidateScore = materialRowCompletenessScore(candidate);
+    if (candidateScore > currentScore) {
+      return candidate;
+    }
+    return current;
+  }
+
+  private static int materialRowCompletenessScore(Map<String, Object> row) {
+    int score = 0;
+    if (!string(row, "child_material_name_cn", "").isBlank()) {
+      score += 4;
+    }
+    if (!string(row, "spec_model", "").isBlank()) {
+      score += 2;
+    }
+    if ("ERP_API_BOM_VIEW_ENTRY".equalsIgnoreCase(string(row, "erp_source_table", ""))) {
+      score += 1;
+    }
+    return score;
+  }
+}
