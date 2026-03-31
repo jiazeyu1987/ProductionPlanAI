@@ -8,15 +8,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 @Component
 public class ErpSqliteOrderLoader {
-  private static final Logger log = LoggerFactory.getLogger(ErpSqliteOrderLoader.class);
   private static final String DEFAULT_ERP_ORG_NO = "881";
 
   private final ErpOrderNormalizer normalizer;
@@ -36,17 +33,13 @@ public class ErpSqliteOrderLoader {
     @Value("${mvp.erp.password:${ERP_PASSWORD:}}") String password,
     @Value("${mvp.erp.lcid:${ERP_LCID:2052}}") int lcid,
     @Value("${mvp.erp.timeout:${ERP_TIMEOUT:30}}") int timeoutSeconds,
-    @Value("${mvp.erp.verify-ssl:${ERP_VERIFY_SSL:true}}") boolean verifySsl,
-    @Value("${mvp.erp.production-order-csv-path:}") String productionOrderCsvPath,
-    @Value("${mvp.erp.demo-out-dir:D:/ProjectPackage/demo/other}") String erpDemoOutDir
+    @Value("${mvp.erp.verify-ssl:${ERP_VERIFY_SSL:true}}") boolean verifySsl
   ) {
     String normalizedBaseUrl = trimToEmpty(baseUrl);
     String normalizedAcctId = trimToEmpty(acctId);
     String normalizedUsername = trimToEmpty(username);
     String normalizedPassword = password == null ? "" : password;
     int normalizedTimeoutSeconds = Math.max(1, timeoutSeconds);
-    String normalizedProductionOrderCsvPath = trimToEmpty(productionOrderCsvPath);
-    String normalizedErpDemoOutDir = trimToEmpty(erpDemoOutDir);
 
     ErpOrderPayloadMapper payloadMapper = new ErpOrderPayloadMapper(objectMapper);
     this.normalizer = new ErpOrderNormalizer();
@@ -70,8 +63,6 @@ public class ErpSqliteOrderLoader {
       lcid,
       normalizedTimeoutSeconds,
       verifySsl,
-      normalizedProductionOrderCsvPath,
-      normalizedErpDemoOutDir,
       payloadMapper,
       normalizer,
       validator,
@@ -81,7 +72,7 @@ public class ErpSqliteOrderLoader {
   }
 
   ErpSqliteOrderLoader(ObjectMapper objectMapper, boolean useRealOrders, String sqlitePath) {
-    this(objectMapper, useRealOrders, sqlitePath, "", "", "", "", 2052, 30, true, "", "D:/ProjectPackage/demo/other");
+    this(objectMapper, useRealOrders, sqlitePath, "", "", "", "", 2052, 30, true);
   }
 
   public List<Map<String, Object>> loadSalesOrderLines() {
@@ -98,15 +89,19 @@ public class ErpSqliteOrderLoader {
     if (queryExecutor.hasLocalSqliteTable("production_orders_raw")) {
       return rows;
     }
-    rows = queryExecutor.loadProductionOrdersFromApi();
-    if (!rows.isEmpty()) {
-      return rows;
-    }
-    return queryExecutor.loadProductionOrdersFromCsv();
+    return queryExecutor.loadProductionOrdersFromApi();
   }
 
   public List<Map<String, Object>> loadProductionMaterialIssuesByOrder(String productionOrderNo, String materialListNo) {
     return loadProductionMaterialIssuesByOrder(productionOrderNo, materialListNo, false);
+  }
+
+  public List<Map<String, Object>> loadProductionMaterialIssuesByOrderContains(String productionOrderNoKeyword) {
+    String normalizedKeyword = firstText(productionOrderNoKeyword);
+    if (normalizedKeyword == null) {
+      return List.of();
+    }
+    return queryExecutor.loadProductionMaterialIssuesFromApiByOrderContains(normalizedKeyword);
   }
 
   public List<Map<String, Object>> loadProductionMaterialIssuesByOrder(
@@ -119,15 +114,11 @@ public class ErpSqliteOrderLoader {
     if (normalizedOrderNo == null && normalizedMaterialListNo == null) {
       return List.of();
     }
-    List<Map<String, Object>> rows = queryExecutor.loadProductionMaterialIssuesFromApiByOrder(
+    return queryExecutor.loadProductionMaterialIssuesFromApiByOrder(
       normalizedOrderNo,
       normalizedMaterialListNo,
       forceRefresh
     );
-    if (!rows.isEmpty()) {
-      return rows;
-    }
-    return queryExecutor.loadProductionMaterialIssuesFromCsvByOrder(normalizedOrderNo, normalizedMaterialListNo);
   }
 
   public List<Map<String, Object>> loadPurchaseOrders() {
@@ -150,23 +141,18 @@ public class ErpSqliteOrderLoader {
     if (normalizedMaterialCode == null) {
       return Map.of();
     }
-
-    if (queryExecutor.hasApiConfig()) {
-      try {
-        Map<String, Object> apiRow = queryExecutor.queryMaterialSupplyInfoFromApi(normalizedMaterialCode);
-        if (!apiRow.isEmpty()) {
-          return apiRow;
-        }
-      } catch (RuntimeException ex) {
-        log.warn("ERP material supply query failed. materialCode={}, message={}", normalizedMaterialCode, ex.getMessage());
-      }
+    if (!queryExecutor.hasApiConfig()) {
+      throw new IllegalStateException(
+        "ERP material supply query requires API configuration. materialCode=" + normalizedMaterialCode
+      );
     }
-
-    return Map.of(
-      "material_code", normalizedMaterialCode,
-      "supply_type", "UNKNOWN",
-      "supply_type_name_cn", "未知"
-    );
+    Map<String, Object> apiRow = queryExecutor.queryMaterialSupplyInfoFromApi(normalizedMaterialCode);
+    if (apiRow.isEmpty()) {
+      throw new IllegalStateException(
+        "ERP material supply query returned no rows. materialCode=" + normalizedMaterialCode
+      );
+    }
+    return apiRow;
   }
 
   public List<Map<String, Object>> loadMaterialInventoryByCodes(List<String> materialCodes, boolean forceRefresh) {
@@ -178,10 +164,15 @@ public class ErpSqliteOrderLoader {
       // Inventory is queried live; retained for API compatibility.
     }
     if (!validator.hasApiConfig()) {
-      return assembler.buildInventoryRowsFromAggregate(Map.of(), normalizedCodes);
+      throw new IllegalStateException(
+        "ERP material inventory query requires API configuration. materialCodes=" + normalizedCodes
+      );
     }
     Map<String, Double> stockByCode = queryExecutor.queryMaterialInventoryStock(normalizedCodes);
-    return assembler.buildInventoryRowsFromAggregate(stockByCode, normalizedCodes);
+    if (stockByCode.isEmpty()) {
+      throw new IllegalStateException("ERP material inventory query returned no rows. materialCodes=" + normalizedCodes);
+    }
+    return assembler.buildInventoryRowsFromAggregate(stockByCode, stockByCode.keySet());
   }
 
   public List<Map<String, Object>> loadSalesOrderHeadersRaw() {

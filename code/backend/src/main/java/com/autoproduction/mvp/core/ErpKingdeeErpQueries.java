@@ -68,7 +68,7 @@ final class ErpKingdeeErpQueries {
       );
     } catch (RuntimeException ex) {
       log.warn("ERP purchase query failed by api. {}", ex.getMessage());
-      return List.of();
+      throw ex;
     }
   }
 
@@ -84,6 +84,7 @@ final class ErpKingdeeErpQueries {
       baseFields + ",FBOMID.FNumber",
       baseFields
     );
+    RuntimeException lastEx = null;
     for (String fieldKeys : fieldVariants) {
       try {
         List<Map<String, Object>> rows = productionOrderQuery.queryProductionRowsFromApi(fieldKeys, "FDate DESC,FID DESC");
@@ -91,8 +92,12 @@ final class ErpKingdeeErpQueries {
           return rows;
         }
       } catch (RuntimeException ex) {
+        lastEx = ex;
         log.debug("ERP production query variant failed. fields={}", fieldKeys, ex);
       }
+    }
+    if (lastEx != null) {
+      throw lastEx;
     }
     return List.of();
   }
@@ -105,6 +110,10 @@ final class ErpKingdeeErpQueries {
     return productionMaterialIssueQuery.loadProductionMaterialIssuesFromApiByOrder(productionOrderNo, materialListNo, forceRefresh);
   }
 
+  List<Map<String, Object>> loadProductionMaterialIssuesFromApiByOrderContains(String productionOrderNoKeyword) {
+    return productionMaterialIssueQuery.loadProductionMaterialIssuesFromApiByOrderContains(productionOrderNoKeyword);
+  }
+
   Map<String, Object> queryMaterialSupplyInfoFromApi(String materialCode) {
     return materialQuery.queryMaterialSupplyInfoFromApi(materialCode);
   }
@@ -113,4 +122,3 @@ final class ErpKingdeeErpQueries {
     return materialQuery.queryMaterialInventoryStock(normalizedCodes);
   }
 }
-

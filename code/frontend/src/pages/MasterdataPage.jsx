@@ -58,6 +58,7 @@ export default function MasterdataPage() {
   return (
     <section>
       <h2>Master Data</h2>
+      {bootstrap.bootstrapError ? <p className="error">{bootstrap.bootstrapError}</p> : null}
       <div className="report-tabs" role="tablist" aria-label="Master data tabs">
         <button
           role="tab"

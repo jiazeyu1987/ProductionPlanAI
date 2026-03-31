@@ -48,7 +48,7 @@ export default function ScheduleCalendarPage() {
         savingRules={savingRules}
         replanning={replanning}
         selectedVersionNo={selectedVersionNo}
-        onSave={() => saveAndReplan().catch(() => {})}
+        onSave={saveAndReplan}
       />
 
       <div className="schedule-calendar-layout">
@@ -83,7 +83,7 @@ export default function ScheduleCalendarPage() {
             selectedVersionNo={selectedVersionNo}
             versionOptions={versionOptions}
             onChangeVersion={setSelectedVersionNo}
-            onRefreshVersionsAndConfig={() => refreshVersionsAndConfig(true).catch(() => {})}
+            onRefreshVersionsAndConfig={() => refreshVersionsAndConfig(true)}
             skipStatutoryHolidays={skipStatutoryHolidays}
             onToggleSkipStatutoryHolidays={setSkipStatutoryHolidays}
             weekendRestMode={weekendRestMode}
@@ -106,4 +106,3 @@ export default function ScheduleCalendarPage() {
     </section>
   );
 }
-

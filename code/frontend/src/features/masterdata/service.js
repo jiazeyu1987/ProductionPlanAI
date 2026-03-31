@@ -1,21 +1,21 @@
-import {
+﻿import {
   copyMasterdataRoute,
   createMasterdataRoute,
   deleteMasterdataRoute,
   getMasterdataConfig,
   getScheduleCalendarRules,
-  listLegacySchedules,
+  listScheduleVersions,
   listOrderMaterialAvailability,
   listProcessRoutes,
   updateMasterdataRoute,
-} from "./apiClient";
+} from ".";
 
 export async function fetchMasterdataBootstrap() {
   const [routeRes, configRes, rulesRes, schedulesRes] = await Promise.all([
     listProcessRoutes(),
-    getMasterdataConfig().catch(() => null),
-    getScheduleCalendarRules().catch(() => null),
-    listLegacySchedules().catch(() => null),
+    getMasterdataConfig(),
+    getScheduleCalendarRules(),
+    listScheduleVersions(),
   ]);
 
   return {
@@ -43,13 +43,13 @@ export async function saveMasterdataRouteByMode({
   const normalizedSteps = Array.isArray(steps) ? steps.filter((row) => row?.process_code) : [];
 
   if ((normalizedMode === "create" || normalizedMode === "copy") && !targetCode) {
-    throw new Error("璇峰厛濉啓鐩爣浜у搧缂栫爜銆?");
+    throw new Error("请先填写目标产品编码。");
   }
   if ((normalizedMode === "edit" || normalizedMode === "copy") && !sourceCode) {
-    throw new Error("璇峰厛閫夋嫨鏉ユ簮浜у搧缂栫爜銆?");
+    throw new Error("请先选择来源产品编码。");
   }
   if (normalizedSteps.length === 0) {
-    throw new Error("鑷冲皯闇€瑕侀厤缃竴涓伐搴忔楠ゃ€?");
+    throw new Error("至少需要配置一个工序步骤。");
   }
 
   if (normalizedMode === "create") {
@@ -72,7 +72,7 @@ export async function saveMasterdataRouteByMode({
     });
   }
 
-  throw new Error("鏈煡鐨勫伐鑹鸿矾绾挎搷浣溿€?");
+  throw new Error("未知的工艺路线操作。");
 }
 
 export async function deleteMasterdataRouteByProductCode(productCode) {

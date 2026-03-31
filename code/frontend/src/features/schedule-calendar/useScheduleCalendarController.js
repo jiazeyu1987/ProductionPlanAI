@@ -104,8 +104,8 @@ export function useScheduleCalendarController() {
     try {
       const [versionsRes, configRes, rulesRes] = await Promise.all([
         listScheduleVersions(),
-        getMasterdataConfig().catch(() => null),
-        getScheduleCalendarRules().catch(() => null)
+        getMasterdataConfig(),
+        getScheduleCalendarRules()
       ]);
 
       const versionRows = Array.isArray(versionsRes?.items) ? versionsRes.items : [];
@@ -164,11 +164,15 @@ export function useScheduleCalendarController() {
   }, []);
 
   useEffect(() => {
-    refreshVersionsAndConfig(false).catch(() => {});
+    refreshVersionsAndConfig(false).catch((err) => {
+      throw err;
+    });
   }, [refreshVersionsAndConfig]);
 
   useEffect(() => {
-    refreshTasks(selectedVersionNo).catch(() => {});
+    refreshTasks(selectedVersionNo).catch((err) => {
+      throw err;
+    });
   }, [refreshTasks, selectedVersionNo]);
 
   useEffect(() => {
@@ -386,4 +390,3 @@ export function useScheduleCalendarController() {
     saveAndReplan
   };
 }
-

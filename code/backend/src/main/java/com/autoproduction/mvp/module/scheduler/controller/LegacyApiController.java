@@ -10,6 +10,7 @@ import com.autoproduction.mvp.module.schedule.ScheduleFacade;
 import jakarta.servlet.http.HttpServletRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -98,6 +99,12 @@ public class LegacyApiController {
     return ApiSupport.json(HttpStatus.CREATED, requestId, scheduleFacade.generateSchedule(body, requestId, "api"));
   }
 
+  @GetMapping("/schedules/generate-task")
+  public Map<String, Object> scheduleGenerateTask(HttpServletRequest request) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    return scheduleFacade.getGenerateTaskStatus(requestId);
+  }
+
   @GetMapping("/schedules")
   public Map<String, Object> listSchedules() {
     Map<String, Object> body = new LinkedHashMap<>();
@@ -164,6 +171,12 @@ public class LegacyApiController {
     return platformMaintenanceService.reset();
   }
 
+  @PostMapping("/runtime/rebuild")
+  public Map<String, Object> rebuildRuntimeState(HttpServletRequest request) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    return platformMaintenanceService.rebuildRuntimeState(requestId);
+  }
+
   @GetMapping("/test/erp/production-orders-preview")
   public Map<String, Object> previewErpProductionOrders(HttpServletRequest request) {
     String requestId = ApiSupport.getOrCreateRequestId(request, null);
@@ -182,25 +195,39 @@ public class LegacyApiController {
   public Map<String, Object> debugErpProductionOrderSources(HttpServletRequest request) {
     String requestId = ApiSupport.getOrCreateRequestId(request, null);
     String sqlitePath = environment.getProperty("mvp.erp.sqlite-path", "");
-    String demoOutDir = environment.getProperty("mvp.erp.demo-out-dir", "D:/ProjectPackage/demo/other");
-    String explicitCsvPath = environment.getProperty("mvp.erp.production-order-csv-path", "");
 
     Map<String, Object> body = new LinkedHashMap<>();
     body.put("request_id", requestId);
     body.put("sqlite_path", sqlitePath);
-    body.put("demo_out_dir", demoOutDir);
-    body.put("explicit_csv_path", explicitCsvPath);
-
     body.put("sqlite_exists", safeExists(sqlitePath));
-    body.put("demo_out_dir_exists", safeExists(demoOutDir));
-    body.put("demo_out_dir_is_dir", safeIsDirectory(demoOutDir));
-    body.put("explicit_csv_exists", safeExists(explicitCsvPath));
+    return body;
+  }
 
-    String resolved = resolveLatestDemoCsv(demoOutDir, "production_order.csv");
-    body.put("resolved_demo_csv_path", resolved);
-    body.put("resolved_demo_csv_exists", safeExists(resolved));
-    body.put("resolved_demo_csv_size", safeSize(resolved));
+  @GetMapping("/test/erp/material-issues/{orderNo}")
+  public Map<String, Object> listErpMaterialIssuesForTest(
+    HttpServletRequest request,
+    @PathVariable String orderNo
+  ) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    String normalizedOrderNo = orderNo == null ? "" : orderNo.trim();
+    if (normalizedOrderNo.isBlank()) {
+      throw new IllegalArgumentException("orderNo is required.");
+    }
 
+    List<Map<String, Object>> items = new ArrayList<>();
+    List<Map<String, Object>> rawRows = erpSqliteOrderLoader.loadProductionMaterialIssuesByOrderContains(normalizedOrderNo);
+    for (Map<String, Object> rawRow : rawRows) {
+      Map<String, Object> row = new LinkedHashMap<>();
+      row.put("order_no", rawRow.getOrDefault("source_production_order_no", ""));
+      row.put("child_material_code", rawRow.getOrDefault("child_material_code", ""));
+      row.put("child_material_name_cn", rawRow.getOrDefault("child_material_name_cn", ""));
+      row.put("spec_model", rawRow.getOrDefault("spec_model", ""));
+      items.add(row);
+    }
+
+    Map<String, Object> body = new LinkedHashMap<>();
+    body.put("request_id", requestId);
+    body.put("items", items);
     return body;
   }
 
@@ -215,56 +242,6 @@ public class LegacyApiController {
     }
   }
 
-  private static boolean safeIsDirectory(String rawPath) {
-    if (rawPath == null || rawPath.isBlank()) {
-      return false;
-    }
-    try {
-      return Files.isDirectory(Path.of(rawPath));
-    } catch (Exception ex) {
-      return false;
-    }
-  }
-
-  private static long safeSize(String rawPath) {
-    if (rawPath == null || rawPath.isBlank()) {
-      return 0L;
-    }
-    try {
-      Path path = Path.of(rawPath);
-      return Files.exists(path) ? Files.size(path) : 0L;
-    } catch (Exception ex) {
-      return 0L;
-    }
-  }
-
-  private static String resolveLatestDemoCsv(String demoOutDir, String fileName) {
-    if (demoOutDir == null || demoOutDir.isBlank()) {
-      return "";
-    }
-    try {
-      Path baseDir = Path.of(demoOutDir);
-      if (!Files.exists(baseDir) || !Files.isDirectory(baseDir)) {
-        return "";
-      }
-      Path direct = baseDir.resolve(fileName);
-      if (Files.exists(direct)) {
-        return direct.toString();
-      }
-      try (var stream = Files.list(baseDir)) {
-        return stream
-          .filter(Files::isDirectory)
-          .map(dir -> dir.resolve(fileName))
-          .filter(Files::exists)
-          .findFirst()
-          .map(Path::toString)
-          .orElse("");
-      }
-    } catch (Exception ex) {
-      return "";
-    }
-  }
-
   @PostMapping("/test/import-production-orders")
   public ResponseEntity<Map<String, Object>> importProductionOrdersFromErp(
     HttpServletRequest request,
@@ -274,5 +251,11 @@ public class LegacyApiController {
     String requestId = ContractControllerSupport.requireRequestId(request, body);
     Map<String, Object> result = orderExecutionFacade.importProductionOrdersFromErp(body, requestId, "api");
     return ApiSupport.ok(requestId, result);
+  }
+
+  @GetMapping("/test/import-production-orders/task")
+  public Map<String, Object> importProductionOrdersTask(HttpServletRequest request) {
+    String requestId = ApiSupport.getOrCreateRequestId(request, null);
+    return orderExecutionFacade.getImportTaskStatus(requestId);
   }
 }

@@ -31,10 +31,12 @@ import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
@@ -43,6 +45,7 @@ import org.springframework.test.web.servlet.MvcResult;
   "mvp.erp.refresh.enabled=false"
 })
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 class MvpApiTest {
   private static final DataFormatter DATA_FORMATTER = new DataFormatter();
 
@@ -51,6 +54,9 @@ class MvpApiTest {
 
   @Autowired
   private ObjectMapper objectMapper;
+
+  @Autowired
+  private JdbcTemplate jdbcTemplate;
 
   @BeforeEach
   void reset() throws Exception {
@@ -166,6 +172,11 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.success").value(true))
       .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(get("/api/schedules/latest"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.version_no").value("V001"))
+      .andExpect(jsonPath("$.status").value("PUBLISHED"));
   }
 
   @Test
@@ -208,6 +219,113 @@ class MvpApiTest {
   }
 
   @Test
+  void scheduleProjectionSnapshotColumnsShouldBePersisted() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-snapshot-columns")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    Map<String, Object> row = jdbcTemplate.queryForMap(
+      "select snapshot_json, algorithm_json from schedule_version where version_no = ?",
+      "V001"
+    );
+    Map<String, Object> snapshotJson = parsePersistedJsonColumn(row.get("snapshot_json"));
+    Map<String, Object> algorithmJson = parsePersistedJsonColumn(row.get("algorithm_json"));
+    assertTrue(snapshotJson.containsKey("unscheduled"), "snapshot_json should contain unscheduled data");
+    assertTrue(algorithmJson.containsKey("strategy_code"), "algorithm_json should contain strategy_code");
+  }
+
+  @Test
+  void unifiedQueryScheduleSnapshotEndpointReturnsProjectionSnapshot() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-query-schedule-snapshot")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(get("/queries/schedules/V001"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.version_no").value("V001"))
+      .andExpect(jsonPath("$.allocations").isArray())
+      .andExpect(jsonPath("$.unscheduled").isArray());
+  }
+
+  @Test
+  void unifiedQueryScheduleReadEndpointsExposeAlgorithmAndDiff() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-query-algo-diff-v1")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(
+        patch("/api/orders/MO-STENT-001")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-query-algo-diff-patch",
+            "frozen_flag", 1
+          )))
+      )
+      .andExpect(status().isOk());
+
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-query-algo-diff-v2",
+            "base_version_no", "V001"
+          )))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V002"));
+
+    mockMvc.perform(get("/queries/schedules/V002/algorithm"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.version_no").value("V002"))
+      .andExpect(jsonPath("$.strategy_code").isString());
+
+    mockMvc.perform(get("/queries/schedules/V002/diff").param("compare_with", "V001"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.base_version_no").value("V001"))
+      .andExpect(jsonPath("$.compare_version_no").value("V002"))
+      .andExpect(jsonPath("$.changed_task_count").isNumber());
+  }
+
+  @Test
+  void unifiedQueryOperationalReadEndpointsWork() throws Exception {
+    mockMvc.perform(get("/queries/order-pool"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+
+    mockMvc.perform(get("/queries/alerts").param("status", "OPEN"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+
+    mockMvc.perform(get("/queries/dispatch-commands"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+
+    mockMvc.perform(get("/queries/audit-logs"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+
+    mockMvc.perform(get("/queries/simulation/state"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.current_sim_date").isString());
+
+    mockMvc.perform(get("/queries/simulation/events").param("page", "1").param("page_size", "10"))
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.items").isArray());
+  }
+
+  @Test
   void generateScheduleSupportsStrategyOption() throws Exception {
     mockMvc.perform(
         post("/api/schedules/generate")
@@ -227,6 +345,51 @@ class MvpApiTest {
       )
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.strategy_code").value("MAX_CAPACITY_FIRST"));
+  }
+
+  @Test
+  void scheduleVersionDiffEndpointWorksFromProjection() throws Exception {
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-diff-v1")))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V001"));
+
+    mockMvc.perform(
+        patch("/api/orders/MO-STENT-001")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-diff-patch",
+            "frozen_flag", 1
+          )))
+      )
+      .andExpect(status().isOk());
+
+    mockMvc.perform(
+        post("/api/schedules/generate")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-diff-v2",
+            "base_version_no", "V001"
+          )))
+      )
+      .andExpect(status().isCreated())
+      .andExpect(jsonPath("$.version_no").value("V002"));
+
+    mockMvc.perform(
+        get("/internal/v1/internal/schedule-versions/V002/diff")
+          .header("Authorization", "Bearer test")
+          .param("compare_with", "V001")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.base_version_no").value("V001"))
+      .andExpect(jsonPath("$.compare_version_no").value("V002"))
+      .andExpect(jsonPath("$.changed_order_count").isNumber())
+      .andExpect(jsonPath("$.changed_task_count").isNumber())
+      .andExpect(jsonPath("$.delayed_order_delta").isNumber())
+      .andExpect(jsonPath("$.overloaded_process_delta").isNumber());
   }
 
   @Test
@@ -323,7 +486,10 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.success").value(true));
 
-    mockMvc.perform(get("/api/orders"))
+    mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[0].lock_flag").value(1));
   }
@@ -365,7 +531,10 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.success").value(true));
 
-    MvcResult ordersAfterPriority = mockMvc.perform(get("/api/orders"))
+    MvcResult ordersAfterPriority = mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andReturn();
     Map<String, Object> ordersAfterPriorityBody = objectMapper.readValue(
@@ -414,7 +583,10 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.success").value(true));
 
-    MvcResult ordersAfterUnpriority = mockMvc.perform(get("/api/orders"))
+    MvcResult ordersAfterUnpriority = mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andReturn();
     Map<String, Object> ordersAfterUnpriorityBody = objectMapper.readValue(
@@ -529,7 +701,7 @@ class MvpApiTest {
 
   @Test
   void simulationRunGeneratesOrdersAndVersions() throws Exception {
-    mockMvc.perform(
+    MvcResult runAccepted = mockMvc.perform(
         post("/internal/v1/internal/simulation/run")
           .header("Authorization", "Bearer test")
           .contentType(MediaType.APPLICATION_JSON)
@@ -542,9 +714,20 @@ class MvpApiTest {
           )))
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.new_sales_orders").value(6))
-      .andExpect(jsonPath("$.new_production_orders").value(6))
-      .andExpect(jsonPath("$.generated_versions").value(2));
+      .andExpect(jsonPath("$.accepted").value(true))
+      .andExpect(jsonPath("$.status").value("ACCEPTED"))
+      .andExpect(jsonPath("$.job_id").isNotEmpty())
+      .andReturn();
+
+    Map<String, Object> runAcceptedBody = objectMapper.readValue(runAccepted.getResponse().getContentAsString(), Map.class);
+    Map<String, Object> job = waitForJobCompletion(String.valueOf(runAcceptedBody.get("job_id")));
+    assertEquals("SUCCEEDED", String.valueOf(job.get("status")));
+
+    Map<String, Object> simulationState = getSimulationStateBody();
+    Map<String, Object> lastRunSummary = mapValue(simulationState, "last_run_summary");
+    assertEquals(6, ((Number) lastRunSummary.get("new_sales_orders")).intValue());
+    assertEquals(6, ((Number) lastRunSummary.get("new_production_orders")).intValue());
+    assertEquals(2, ((Number) lastRunSummary.get("generated_versions")).intValue());
 
     mockMvc.perform(
         get("/internal/v1/internal/order-pool")
@@ -619,21 +802,32 @@ class MvpApiTest {
       .andExpect(status().isOk())
       .andExpect(jsonPath("$.items[?(@.order_no=='" + newOrderNo + "')]").isArray());
 
-    mockMvc.perform(
+    MvcResult advanceAccepted = mockMvc.perform(
         post("/internal/v1/internal/simulation/manual/advance-day")
           .header("Authorization", "Bearer test")
           .contentType(MediaType.APPLICATION_JSON)
           .content(objectMapper.writeValueAsString(Map.of("request_id", "req-test-manual-advance")))
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.days").value(1))
-      .andExpect(jsonPath("$.generated_versions").value(1))
-      .andExpect(jsonPath("$.reporting_count").isNumber())
-      .andExpect(jsonPath("$.manual_advance_duration_ms").isNumber())
-      .andExpect(jsonPath("$.manual_advance_phase_duration_ms").isMap())
-      .andExpect(jsonPath("$.schedule_generate_duration_ms").isNumber())
-      .andExpect(jsonPath("$.unscheduled_reason_distribution").isMap())
-      .andExpect(jsonPath("$.state.latest_version_no").isNotEmpty());
+      .andExpect(jsonPath("$.accepted").value(true))
+      .andExpect(jsonPath("$.status").value("ACCEPTED"))
+      .andExpect(jsonPath("$.job_id").isNotEmpty())
+      .andReturn();
+
+    Map<String, Object> advanceAcceptedBody = objectMapper.readValue(advanceAccepted.getResponse().getContentAsString(), Map.class);
+    Map<String, Object> advanceJob = waitForJobCompletion(String.valueOf(advanceAcceptedBody.get("job_id")));
+    assertEquals("SUCCEEDED", String.valueOf(advanceJob.get("status")));
+
+    Map<String, Object> advancedState = getSimulationStateBody();
+    Map<String, Object> lastRunSummary = mapValue(advancedState, "last_run_summary");
+    assertEquals(1, ((Number) lastRunSummary.get("days")).intValue());
+    assertEquals(1, ((Number) lastRunSummary.get("generated_versions")).intValue());
+    assertTrue(lastRunSummary.get("reporting_count") instanceof Number);
+    assertTrue(lastRunSummary.get("manual_advance_duration_ms") instanceof Number);
+    assertTrue(lastRunSummary.get("manual_advance_phase_duration_ms") instanceof Map<?, ?>);
+    assertTrue(lastRunSummary.get("schedule_generate_duration_ms") instanceof Number);
+    assertTrue(lastRunSummary.get("unscheduled_reason_distribution") instanceof Map<?, ?>);
+    assertTrue(advancedState.get("latest_version_no") instanceof String);
 
     mockMvc.perform(
         post("/internal/v1/internal/simulation/manual/reset")
@@ -672,7 +866,7 @@ class MvpApiTest {
     String expectedStartDate = currentSimDate.plusDays(1).toString();
     String expectedNextCurrentDate = currentSimDate.plusDays(2).toString();
 
-    mockMvc.perform(
+    MvcResult advanceAccepted = mockMvc.perform(
         post("/internal/v1/internal/simulation/manual/advance-day")
           .header("Authorization", "Bearer test")
           .contentType(MediaType.APPLICATION_JSON)
@@ -682,8 +876,18 @@ class MvpApiTest {
           )))
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.start_date").value(expectedStartDate))
-      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate));
+      .andExpect(jsonPath("$.accepted").value(true))
+      .andExpect(jsonPath("$.job_id").isNotEmpty())
+      .andReturn();
+
+    Map<String, Object> advanceAcceptedBody = objectMapper.readValue(advanceAccepted.getResponse().getContentAsString(), Map.class);
+    Map<String, Object> advanceJob = waitForJobCompletion(String.valueOf(advanceAcceptedBody.get("job_id")));
+    assertEquals("SUCCEEDED", String.valueOf(advanceJob.get("status")));
+
+    Map<String, Object> updatedState = getSimulationStateBody();
+    Map<String, Object> lastRunSummary = mapValue(updatedState, "last_run_summary");
+    assertEquals(expectedStartDate, String.valueOf(lastRunSummary.get("start_date")));
+    assertEquals(expectedNextCurrentDate, String.valueOf(updatedState.get("current_sim_date")));
   }
 
   @Test
@@ -700,7 +904,7 @@ class MvpApiTest {
     LocalDate expectedStartDate = currentSimDate.isBefore(nextDayFromClientDate) ? nextDayFromClientDate : currentSimDate;
     LocalDate expectedNextCurrentDate = expectedStartDate.plusDays(1);
 
-    mockMvc.perform(
+    MvcResult advanceAccepted = mockMvc.perform(
         post("/internal/v1/internal/simulation/manual/advance-day")
           .header("Authorization", "Bearer test")
           .contentType(MediaType.APPLICATION_JSON)
@@ -710,8 +914,18 @@ class MvpApiTest {
           )))
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.start_date").value(expectedStartDate.toString()))
-      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate.toString()));
+      .andExpect(jsonPath("$.accepted").value(true))
+      .andExpect(jsonPath("$.job_id").isNotEmpty())
+      .andReturn();
+
+    Map<String, Object> advanceAcceptedBody = objectMapper.readValue(advanceAccepted.getResponse().getContentAsString(), Map.class);
+    Map<String, Object> advanceJob = waitForJobCompletion(String.valueOf(advanceAcceptedBody.get("job_id")));
+    assertEquals("SUCCEEDED", String.valueOf(advanceJob.get("status")));
+
+    Map<String, Object> updatedState = getSimulationStateBody();
+    Map<String, Object> lastRunSummary = mapValue(updatedState, "last_run_summary");
+    assertEquals(expectedStartDate.toString(), String.valueOf(lastRunSummary.get("start_date")));
+    assertEquals(expectedNextCurrentDate.toString(), String.valueOf(updatedState.get("current_sim_date")));
   }
 
   @Test
@@ -728,7 +942,7 @@ class MvpApiTest {
     LocalDate expectedStartDate = currentSimDate.isBefore(nextDayFromServerDate) ? nextDayFromServerDate : currentSimDate;
     LocalDate expectedNextCurrentDate = expectedStartDate.plusDays(1);
 
-    mockMvc.perform(
+    MvcResult advanceAccepted = mockMvc.perform(
         post("/internal/v1/internal/simulation/manual/advance-day")
           .header("Authorization", "Bearer test")
           .contentType(MediaType.APPLICATION_JSON)
@@ -737,8 +951,18 @@ class MvpApiTest {
           )))
       )
       .andExpect(status().isOk())
-      .andExpect(jsonPath("$.start_date").value(expectedStartDate.toString()))
-      .andExpect(jsonPath("$.state.current_sim_date").value(expectedNextCurrentDate.toString()));
+      .andExpect(jsonPath("$.accepted").value(true))
+      .andExpect(jsonPath("$.job_id").isNotEmpty())
+      .andReturn();
+
+    Map<String, Object> advanceAcceptedBody = objectMapper.readValue(advanceAccepted.getResponse().getContentAsString(), Map.class);
+    Map<String, Object> advanceJob = waitForJobCompletion(String.valueOf(advanceAcceptedBody.get("job_id")));
+    assertEquals("SUCCEEDED", String.valueOf(advanceJob.get("status")));
+
+    Map<String, Object> updatedState = getSimulationStateBody();
+    Map<String, Object> lastRunSummary = mapValue(updatedState, "last_run_summary");
+    assertEquals(expectedStartDate.toString(), String.valueOf(lastRunSummary.get("start_date")));
+    assertEquals(expectedNextCurrentDate.toString(), String.valueOf(updatedState.get("current_sim_date")));
   }
 
   @Test
@@ -1027,6 +1251,52 @@ class MvpApiTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void mesReportingsShouldKeepRuntimeRowsWhenProjectionIsPartial() throws Exception {
+    MvcResult firstCreate = mockMvc.perform(
+        post("/api/reportings")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-reporting-merge-1",
+            "order_no", "MO-CATH-001",
+            "product_code", "PROD_CATH",
+            "process_code", "PROC_TUBE",
+            "report_qty", 50
+          )))
+      )
+      .andExpect(status().isCreated())
+      .andReturn();
+
+    mockMvc.perform(
+        post("/api/reportings")
+          .contentType(MediaType.APPLICATION_JSON)
+          .content(objectMapper.writeValueAsString(Map.of(
+            "request_id", "req-test-reporting-merge-2",
+            "order_no", "MO-CATH-001",
+            "product_code", "PROD_CATH",
+            "process_code", "PROC_ASSEMBLY",
+            "report_qty", 60
+          )))
+      )
+      .andExpect(status().isCreated());
+
+    Map<String, Object> firstBody = objectMapper.readValue(firstCreate.getResponse().getContentAsString(), Map.class);
+    jdbcTemplate.update("delete from reporting where reporting_id = ?", String.valueOf(firstBody.get("reporting_id")));
+
+    MvcResult reportingsResult = mockMvc.perform(
+        get("/v1/mes/reportings")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andExpect(jsonPath("$.total").value(2))
+      .andReturn();
+
+    Map<String, Object> reportingsBody = objectMapper.readValue(reportingsResult.getResponse().getContentAsString(), Map.class);
+    List<Map<String, Object>> items = (List<Map<String, Object>>) reportingsBody.get("items");
+    assertEquals(2, items.size());
+  }
+
+  @Test
   void onlyFinalProcessReportingCountsAsFinishedQtyAndKeepsRemainingSchedulable() throws Exception {
     mockMvc.perform(
         post("/api/reportings")
@@ -1054,7 +1324,10 @@ class MvpApiTest {
       )
       .andExpect(status().isCreated());
 
-    MvcResult beforeFinalResult = mockMvc.perform(get("/api/orders"))
+    MvcResult beforeFinalResult = mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andReturn();
     Map<String, Object> beforeFinalBody = objectMapper.readValue(beforeFinalResult.getResponse().getContentAsString(), Map.class);
@@ -1063,8 +1336,7 @@ class MvpApiTest {
       .filter(row -> "MO-CATH-001".equals(row.get("order_no")))
       .findFirst()
       .orElseThrow();
-    List<Map<String, Object>> beforeFinalItems = (List<Map<String, Object>>) beforeFinalCath.get("items");
-    assertEquals(0d, ((Number) beforeFinalItems.get(0).get("completed_qty")).doubleValue());
+    assertEquals(0d, ((Number) beforeFinalCath.get("completed_qty")).doubleValue());
 
     mockMvc.perform(
         post("/api/reportings")
@@ -1079,7 +1351,10 @@ class MvpApiTest {
       )
       .andExpect(status().isCreated());
 
-    MvcResult afterFinalResult = mockMvc.perform(get("/api/orders"))
+    MvcResult afterFinalResult = mockMvc.perform(
+        get("/internal/v1/internal/order-pool")
+          .header("Authorization", "Bearer test")
+      )
       .andExpect(status().isOk())
       .andReturn();
     Map<String, Object> afterFinalBody = objectMapper.readValue(afterFinalResult.getResponse().getContentAsString(), Map.class);
@@ -1088,8 +1363,7 @@ class MvpApiTest {
       .filter(row -> "MO-CATH-001".equals(row.get("order_no")))
       .findFirst()
       .orElseThrow();
-    List<Map<String, Object>> afterFinalItems = (List<Map<String, Object>>) afterFinalCath.get("items");
-    assertEquals(276d, ((Number) afterFinalItems.get(0).get("completed_qty")).doubleValue());
+    assertEquals(276d, ((Number) afterFinalCath.get("completed_qty")).doubleValue());
 
     mockMvc.perform(
         post("/api/schedules/generate")
@@ -1515,5 +1789,58 @@ class MvpApiTest {
       .filter(row -> processCode.equals(row.get("process_code")))
       .mapToDouble(row -> ((Number) row.get("report_qty")).doubleValue())
       .sum();
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> getSimulationStateBody() throws Exception {
+    MvcResult stateResult = mockMvc.perform(
+        get("/internal/v1/internal/simulation/state")
+          .header("Authorization", "Bearer test")
+      )
+      .andExpect(status().isOk())
+      .andReturn();
+    return objectMapper.readValue(stateResult.getResponse().getContentAsString(), Map.class);
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> waitForJobCompletion(String jobId) throws Exception {
+    for (int attempt = 0; attempt < 50; attempt += 1) {
+      MvcResult jobResult = mockMvc.perform(get("/queries/jobs/" + jobId))
+        .andExpect(status().isOk())
+        .andReturn();
+      Map<String, Object> jobBody = objectMapper.readValue(jobResult.getResponse().getContentAsString(), Map.class);
+      String statusValue = String.valueOf(jobBody.get("status"));
+      if ("SUCCEEDED".equals(statusValue) || "FAILED".equals(statusValue) || "CANCELLED".equals(statusValue)) {
+        return jobBody;
+      }
+      try {
+        Thread.sleep(100L);
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("Interrupted while waiting for job completion: " + jobId, ex);
+      }
+    }
+    throw new AssertionError("Job did not complete in time: " + jobId);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static Map<String, Object> mapValue(Map<String, Object> body, String key) {
+    Object value = body.get(key);
+    assertTrue(value instanceof Map<?, ?>, key + " should be an object");
+    return (Map<String, Object>) value;
+  }
+
+  @SuppressWarnings("unchecked")
+  private Map<String, Object> parsePersistedJsonColumn(Object raw) throws Exception {
+    assertNotNull(raw, "persisted json column should not be null");
+    String json = raw instanceof byte[] bytes ? new String(bytes) : String.valueOf(raw);
+    var node = objectMapper.readTree(json);
+    if (node.isObject()) {
+      return objectMapper.convertValue(node, Map.class);
+    }
+    if (node.isTextual()) {
+      return objectMapper.readValue(node.asText(), Map.class);
+    }
+    return Map.of();
   }
 }

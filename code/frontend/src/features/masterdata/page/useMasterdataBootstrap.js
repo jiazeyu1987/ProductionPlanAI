@@ -6,6 +6,7 @@ export function useMasterdataBootstrap() {
   const [configRes, setConfigRes] = useState(null);
   const [rulesRes, setRulesRes] = useState(null);
   const [schedules, setSchedules] = useState([]);
+  const [bootstrapError, setBootstrapError] = useState("");
 
   const [orderMaterialRows, setOrderMaterialRows] = useState([]);
   const [orderMaterialLoading, setOrderMaterialLoading] = useState(false);
@@ -14,18 +15,12 @@ export function useMasterdataBootstrap() {
   const [orderMaterialLoaded, setOrderMaterialLoaded] = useState(false);
 
   const refreshMasterdata = useCallback(async () => {
-    try {
-      const snapshot = await fetchMasterdataBootstrap();
-      setRoutes(snapshot.routes ?? []);
-      setConfigRes(snapshot.configRes ?? null);
-      setRulesRes(snapshot.rulesRes ?? null);
-      setSchedules(snapshot.schedules ?? []);
-    } catch (_error) {
-      setRoutes([]);
-      setConfigRes(null);
-      setRulesRes(null);
-      setSchedules([]);
-    }
+    setBootstrapError("");
+    const snapshot = await fetchMasterdataBootstrap();
+    setRoutes(snapshot.routes ?? []);
+    setConfigRes(snapshot.configRes ?? null);
+    setRulesRes(snapshot.rulesRes ?? null);
+    setSchedules(snapshot.schedules ?? []);
   }, []);
 
   const refreshOrderMaterialRows = useCallback(async (refreshFromErp = false) => {
@@ -63,7 +58,10 @@ export function useMasterdataBootstrap() {
   ]);
 
   useEffect(() => {
-    refreshMasterdata().catch(() => {});
+    refreshMasterdata().catch((error) => {
+      setBootstrapError(error?.message || "加载主数据失败");
+      throw error;
+    });
   }, [refreshMasterdata]);
 
   return {
@@ -71,6 +69,7 @@ export function useMasterdataBootstrap() {
     configRes,
     rulesRes,
     schedules,
+    bootstrapError,
     orderMaterialRows,
     orderMaterialLoading,
     orderMaterialRefreshing,

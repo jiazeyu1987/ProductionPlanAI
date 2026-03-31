@@ -54,6 +54,7 @@ final class ErpKingdeeMaterialQuery {
       "FNumber = '" + validator.escapeFilterValue(normalizedMaterialCode) + "'"
     );
 
+    RuntimeException lastEx = null;
     for (String fieldKeys : fieldVariants) {
       for (String filter : filters) {
         try {
@@ -71,9 +72,13 @@ final class ErpKingdeeMaterialQuery {
           Map<String, Object> row = rows.get(0);
           return rowMapper.normalizeMaterialSupplyInfo(row, normalizedMaterialCode);
         } catch (RuntimeException ex) {
+          lastEx = ex;
           log.debug("ERP material supply query variant failed. materialCode={}, fields={}, filter={}", normalizedMaterialCode, fieldKeys, filter, ex);
         }
       }
+    }
+    if (lastEx != null) {
+      throw lastEx;
     }
     return Map.of();
   }
@@ -126,6 +131,7 @@ final class ErpKingdeeMaterialQuery {
       if (rows.isEmpty()) {
         if (lastEx != null) {
           log.debug("ERP inventory query chunk failed. materialCodes={}, message={}", chunk, lastEx.getMessage());
+          throw lastEx;
         }
         continue;
       }
@@ -134,4 +140,3 @@ final class ErpKingdeeMaterialQuery {
     return stockByCode;
   }
 }
-

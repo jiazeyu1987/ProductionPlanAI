@@ -8,7 +8,6 @@ import java.util.Set;
 final class ErpSqliteOrderQueryExecutor {
   private final ErpSqliteOrderValidator validator;
   private final ErpSqliteSnapshotReader snapshotReader;
-  private final ErpSqliteCsvFallbackReader csvFallbackReader;
   private final ErpKingdeeErpQueries apiQueries;
 
   ErpSqliteOrderQueryExecutor(
@@ -22,8 +21,6 @@ final class ErpSqliteOrderQueryExecutor {
     int lcid,
     int timeoutSeconds,
     boolean verifySsl,
-    String productionOrderCsvPath,
-    String erpDemoOutDir,
     ErpOrderPayloadMapper payloadMapper,
     ErpOrderNormalizer normalizer,
     ErpSqliteOrderValidator validator,
@@ -32,7 +29,6 @@ final class ErpSqliteOrderQueryExecutor {
   ) {
     this.validator = validator;
     this.snapshotReader = new ErpSqliteSnapshotReader(useRealOrders, sqlitePath, payloadMapper);
-    this.csvFallbackReader = new ErpSqliteCsvFallbackReader(productionOrderCsvPath, erpDemoOutDir, validator, rowMapper);
     this.apiQueries = new ErpKingdeeErpQueries(
       objectMapper,
       baseUrl,
@@ -94,11 +90,7 @@ final class ErpSqliteOrderQueryExecutor {
     return apiQueries.loadProductionMaterialIssuesFromApiByOrder(productionOrderNo, materialListNo, forceRefresh);
   }
 
-  List<Map<String, Object>> loadProductionOrdersFromCsv() {
-    return csvFallbackReader.loadProductionOrdersFromCsv();
-  }
-
-  List<Map<String, Object>> loadProductionMaterialIssuesFromCsvByOrder(String productionOrderNo, String materialListNo) {
-    return csvFallbackReader.loadProductionMaterialIssuesFromCsvByOrder(productionOrderNo, materialListNo);
+  List<Map<String, Object>> loadProductionMaterialIssuesFromApiByOrderContains(String productionOrderNoKeyword) {
+    return apiQueries.loadProductionMaterialIssuesFromApiByOrderContains(productionOrderNoKeyword);
   }
 }

@@ -1,6 +1,7 @@
 package com.autoproduction.mvp.module.integration.erp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 import com.autoproduction.mvp.core.ErpSqliteOrderLoader;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
 class ErpDataManagerTest {
@@ -25,10 +27,11 @@ class ErpDataManagerTest {
     when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of(Map.of("erp_record_id", "production_orders_raw:1")));
     when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of(Map.of("erp_line_id", "production_orders_raw:1:1")));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     Map<String, Object> result = manager.refreshManual("req-erp-manual", "tester", "manual refresh");
 
-    assertEquals("SUCCESS", result.get("status"));
+    assertEquals("ACCEPTED", result.get("status"));
+    waitForRefreshStatus(manager, "SUCCESS");
     assertEquals(1, manager.getSalesOrderLines().size());
     assertEquals(1, manager.getProductionOrders().size());
 
@@ -47,8 +50,9 @@ class ErpDataManagerTest {
     when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of());
     when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of());
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 600_000L, true);
-    manager.refreshManual("req-initial", "tester", "seed");
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 600_000L, true);
+    assertEquals("ACCEPTED", manager.refreshManual("req-initial", "tester", "seed").get("status"));
+    waitForRefreshStatus(manager, "SUCCESS");
     Map<String, Object> result = manager.refreshTriggered("MES_REPORTING", "req-trigger", "event");
 
     assertEquals("SKIPPED", result.get("status"));
@@ -59,7 +63,7 @@ class ErpDataManagerTest {
   @Test
   void scheduledRefreshSkipsWhenDisabled() {
     ErpSqliteOrderLoader loader = mock(ErpSqliteOrderLoader.class);
-    ErpDataManager manager = new ErpDataManager(loader, false, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, false, 5_000L, true);
 
     Map<String, Object> result = manager.refreshScheduled();
 
@@ -79,12 +83,14 @@ class ErpDataManagerTest {
     when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of());
     when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of());
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 0L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 0L, true);
     Map<String, Object> first = manager.refreshManual("req-ok", "tester", "first");
+    waitForRefreshStatus(manager, "SUCCESS");
     Map<String, Object> second = manager.refreshManual("req-fail", "tester", "second");
 
-    assertEquals("SUCCESS", first.get("status"));
-    assertEquals("FAILED", second.get("status"));
+    assertEquals("ACCEPTED", first.get("status"));
+    assertEquals("ACCEPTED", second.get("status"));
+    waitForRefreshStatus(manager, "FAILED");
     assertEquals(1, manager.getSalesOrderLines().size());
 
     Map<String, Object> status = manager.getRefreshStatus("req-status");
@@ -98,7 +104,7 @@ class ErpDataManagerTest {
     when(loader.loadProductionMaterialIssuesByOrder("MO-001", "PPBOM001", false))
       .thenReturn(List.of(Map.of("child_material_code", "A001")));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     List<Map<String, Object>> first = manager.getProductionMaterialIssuesByOrder("MO-001", "PPBOM001");
     List<Map<String, Object>> second = manager.getProductionMaterialIssuesByOrder("MO-001", "PPBOM001");
 
@@ -115,7 +121,7 @@ class ErpDataManagerTest {
     when(loader.loadProductionMaterialIssuesByOrder("MO-001", "PPBOM001", true))
       .thenReturn(List.of(Map.of("child_material_code", "A002")));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     List<Map<String, Object>> cached = manager.getProductionMaterialIssuesByOrder("MO-001", "PPBOM001");
     List<Map<String, Object>> refreshed = manager.getProductionMaterialIssuesByOrder("MO-001", "PPBOM001", true);
     List<Map<String, Object>> afterRefresh = manager.getProductionMaterialIssuesByOrder("MO-001", "PPBOM001");
@@ -133,7 +139,7 @@ class ErpDataManagerTest {
     when(loader.loadMaterialSupplyInfo("A001.02.012.2005"))
       .thenReturn(Map.of("material_code", "A001.02.012.2005", "supply_type", "SELF_MADE"));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     Map<String, Object> first = manager.getMaterialSupplyInfo("A001.02.012.2005");
     Map<String, Object> second = manager.getMaterialSupplyInfo("A001.02.012.2005");
 
@@ -143,67 +149,50 @@ class ErpDataManagerTest {
   }
 
   @Test
-  void materialSupplyInfoFallsBackToPurchaseOrdersWhenUnknown() {
+  void materialSupplyInfoThrowsWhenSupplyTypeIsUnknown() {
     ErpSqliteOrderLoader loader = mock(ErpSqliteOrderLoader.class);
     when(loader.loadMaterialSupplyInfo("A001.02.012.2005"))
       .thenReturn(Map.of("material_code", "A001.02.012.2005", "supply_type", "UNKNOWN"));
-    when(loader.loadPurchaseOrders())
-      .thenReturn(List.of(Map.of("material_code", "A001.02.012.2005")));
-    when(loader.loadSalesOrderLines()).thenReturn(List.of());
-    when(loader.loadProductionOrders()).thenReturn(List.of());
-    when(loader.loadSalesOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadSalesOrderLinesRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of());
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
-    Map<String, Object> result = manager.getMaterialSupplyInfo("A001.02.012.2005");
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
+    IllegalStateException ex = assertThrows(
+      IllegalStateException.class,
+      () -> manager.getMaterialSupplyInfo("A001.02.012.2005")
+    );
 
-    assertEquals("PURCHASED", result.get("supply_type"));
-    assertEquals("\u5916\u8D2D", result.get("supply_type_name_cn"));
+    assertTrue(ex.getMessage().contains("unknown supply_type"));
     verify(loader, times(1)).loadMaterialSupplyInfo("A001.02.012.2005");
   }
 
   @Test
-  void materialSupplyInfoFallsBackToProductionOrdersWhenUnknown() {
+  void materialSupplyInfoThrowsWhenSnapshotWouldHaveBeenUsedAsFallback() {
     ErpSqliteOrderLoader loader = mock(ErpSqliteOrderLoader.class);
     when(loader.loadMaterialSupplyInfo("YXN.009.020.1047"))
       .thenReturn(Map.of("material_code", "YXN.009.020.1047", "supply_type", "UNKNOWN"));
-    when(loader.loadProductionOrders())
-      .thenReturn(List.of(Map.of("product_code", "YXN.009.020.1047")));
-    when(loader.loadPurchaseOrders()).thenReturn(List.of());
-    when(loader.loadSalesOrderLines()).thenReturn(List.of());
-    when(loader.loadSalesOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadSalesOrderLinesRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of());
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
-    Map<String, Object> result = manager.getMaterialSupplyInfo("YXN.009.020.1047");
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
+    IllegalStateException ex = assertThrows(
+      IllegalStateException.class,
+      () -> manager.getMaterialSupplyInfo("YXN.009.020.1047")
+    );
 
-    assertEquals("SELF_MADE", result.get("supply_type"));
-    assertEquals("\u81EA\u5236", result.get("supply_type_name_cn"));
+    assertTrue(ex.getMessage().contains("unknown supply_type"));
     verify(loader, times(1)).loadMaterialSupplyInfo("YXN.009.020.1047");
   }
 
   @Test
-  void materialSupplyInfoFallsBackToCodeRuleWhenSnapshotMissed() {
+  void materialSupplyInfoThrowsWhenCodeRuleWouldHaveBeenUsedAsFallback() {
     ErpSqliteOrderLoader loader = mock(ErpSqliteOrderLoader.class);
     when(loader.loadMaterialSupplyInfo("A002.11.001.000008"))
       .thenReturn(Map.of("material_code", "A002.11.001.000008", "supply_type", "UNKNOWN"));
-    when(loader.loadProductionOrders()).thenReturn(List.of());
-    when(loader.loadPurchaseOrders()).thenReturn(List.of());
-    when(loader.loadSalesOrderLines()).thenReturn(List.of());
-    when(loader.loadSalesOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadSalesOrderLinesRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderHeadersRaw()).thenReturn(List.of());
-    when(loader.loadProductionOrderLinesRaw()).thenReturn(List.of());
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
-    Map<String, Object> result = manager.getMaterialSupplyInfo("A002.11.001.000008");
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
+    IllegalStateException ex = assertThrows(
+      IllegalStateException.class,
+      () -> manager.getMaterialSupplyInfo("A002.11.001.000008")
+    );
 
-    assertEquals("PURCHASED", result.get("supply_type"));
-    assertEquals("\u5916\u8D2D", result.get("supply_type_name_cn"));
+    assertTrue(ex.getMessage().contains("unknown supply_type"));
     verify(loader, times(1)).loadMaterialSupplyInfo("A002.11.001.000008");
   }
 
@@ -213,7 +202,7 @@ class ErpDataManagerTest {
     when(loader.loadMaterialInventoryByCodes(List.of("A001.02.012.2005"), false))
       .thenReturn(List.of(Map.of("material_code", "A001.02.012.2005", "stock_qty", 321.0)));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     Map<String, Map<String, Object>> first = manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), false);
     Map<String, Map<String, Object>> second = manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), false);
 
@@ -230,7 +219,7 @@ class ErpDataManagerTest {
     when(loader.loadMaterialInventoryByCodes(List.of("A001.02.012.2005"), true))
       .thenReturn(List.of(Map.of("material_code", "A001.02.012.2005", "stock_qty", 111.0)));
 
-    ErpDataManager manager = new ErpDataManager(loader, true, 5_000L, true);
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
     Map<String, Map<String, Object>> cached = manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), false);
     Map<String, Map<String, Object>> refreshed = manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), true);
     Map<String, Map<String, Object>> afterRefresh = manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), false);
@@ -242,6 +231,22 @@ class ErpDataManagerTest {
     verify(loader, times(1)).loadMaterialInventoryByCodes(List.of("A001.02.012.2005"), true);
   }
 
+  @Test
+  void materialInventoryByCodesThrowsWhenRequestedCodesAreMissingFromLoadedRows() {
+    ErpSqliteOrderLoader loader = mock(ErpSqliteOrderLoader.class);
+    when(loader.loadMaterialInventoryByCodes(List.of("A001.02.012.2005"), false))
+      .thenReturn(List.of());
+
+    ErpDataManager manager = ErpDataManagerTestFactory.create(loader, true, 5_000L, true);
+    IllegalStateException ex = assertThrows(
+      IllegalStateException.class,
+      () -> manager.getMaterialInventoryByCodes(List.of("A001.02.012.2005"), false)
+    );
+
+    assertTrue(ex.getMessage().contains("rows missing"));
+    verify(loader, times(1)).loadMaterialInventoryByCodes(List.of("A001.02.012.2005"), false);
+  }
+
   @SuppressWarnings("unchecked")
   private static Map<String, Object> map(Object value) {
     return (Map<String, Object>) value;
@@ -249,5 +254,22 @@ class ErpDataManagerTest {
 
   private static long number(Object value) {
     return value instanceof Number number ? number.longValue() : 0L;
+  }
+
+  private static void waitForRefreshStatus(ErpDataManager manager, String expectedStatus) {
+    for (int attempt = 0; attempt < 100; attempt += 1) {
+      Map<String, Object> status = manager.getRefreshStatus("req-wait");
+      Map<String, Object> refreshState = map(status.get("refresh_state"));
+      if (expectedStatus.equals(refreshState.get("last_status"))) {
+        return;
+      }
+      try {
+        Thread.sleep(20L);
+      } catch (InterruptedException ex) {
+        Thread.currentThread().interrupt();
+        throw new AssertionError("Interrupted while waiting for ERP refresh status.", ex);
+      }
+    }
+    Assertions.fail("Timed out waiting for ERP refresh status=" + expectedStatus);
   }
 }
